@@ -30,6 +30,7 @@
 #include <boost/range/adaptor/transformed.hpp>
 #include <seastar/net/packet-data-source.hh>
 #include <seastar/core/print.hh>
+#include <functional>
 
 namespace seastar {
 
@@ -516,16 +517,30 @@ inline future<> reply(wait_type, future<RetTypes SEASTAR_ELLIPSIS>&& ret, int64_
                 data = std::invoke(marshall<Serializer, const RetTypes& SEASTAR_ELLIPSIS>, std::ref(client->template serializer<Serializer>()), 12, std::move(ret.get0()));
             }
         } catch (std::exception& ex) {
-            uint32_t len = std::strlen(ex.what());
-            data = snd_buf(20 + len);
-            auto os = make_serializer_stream(data);
-            os.skip(12);
-            uint32_t v32 = cpu_to_le(uint32_t(exception_type::USER));
-            os.write(reinterpret_cast<char*>(&v32), sizeof(v32));
-            v32 = cpu_to_le(len);
-            os.write(reinterpret_cast<char*>(&v32), sizeof(v32));
-            os.write(ex.what(), len);
-            msg_id = -msg_id;
+            std::string msg;
+            std::function<void(const std::exception&)> recurse = [&msg, &recurse] (const std::exception& ex) {
+                msg += ex.what();
+                try {
+                    std::rethrow_if_nested(ex);
+                } catch(std::exception& nested) {
+                    msg += ": ";
+                    recurse(nested);
+                } catch(...) {}
+            };
+            recurse(ex);
+            auto handle_exception = [&] (std::string_view msg) {
+                uint32_t len = msg.size();
+                data = snd_buf(20 + len);
+                auto os = make_serializer_stream(data);
+                os.skip(12);
+                uint32_t v32 = cpu_to_le(uint32_t(exception_type::USER));
+                os.write(reinterpret_cast<char*>(&v32), sizeof(v32));
+                v32 = cpu_to_le(len);
+                os.write(reinterpret_cast<char*>(&v32), sizeof(v32));
+                os.write(msg.data(), len);
+                msg_id = -msg_id;
+            };
+            handle_exception(msg);
         }
 
         return client->respond(msg_id, std::move(data), timeout);
