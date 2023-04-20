@@ -21,6 +21,8 @@
 
 #pragma once
 #include <atomic>
+#include <functional>
+#include <utility>
 
 namespace seastar {
 
@@ -44,21 +46,17 @@ void set_need_preempt_var(const preemption_monitor* pm);
 
 }
 
-inline bool need_preempt() noexcept {
-#ifndef SEASTAR_DEBUG
-    // prevent compiler from eliminating loads in a loop
-    std::atomic_signal_fence(std::memory_order_seq_cst);
-    auto np = internal::get_need_preempt_var();
-    // We aren't reading anything from the ring, so we don't need
-    // any barriers.
-    auto head = np->head.load(std::memory_order_relaxed);
-    auto tail = np->tail.load(std::memory_order_relaxed);
-    // Possible optimization: read head and tail in a single 64-bit load,
-    // and find a funky way to compare the two 32-bit halves.
-    return __builtin_expect(head != tail, false);
-#else
-    return true;
-#endif
-}
+#if 0
+extern thread_local std::function<bool()> need_preempt_fn;
 
+auto with_preempt_function(std::function<bool()> pf, auto&& fn) {
+   auto oldpf = std::exchange(need_preempt_fn, std::move(pf));
+   auto x = defer([&] {need_preempt_fn = std::move(oldpf);});
+   return fn();
+}
+#endif
+
+bool need_preempt() noexcept;
+void setup_preempt_fd();
+void desetup_preempt_fd();
 }

@@ -31,6 +31,13 @@
 #include <seastar/core/thread.hh>
 #include <seastar/core/reactor.hh>
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 namespace seastar {
 
@@ -182,5 +189,84 @@ bool tasktrace::operator==(const tasktrace& o) const noexcept {
 }
 
 tasktrace::~tasktrace() {}
+
+
+bool need_preempt_default() noexcept {
+#ifndef SEASTAR_DEBUG
+    // prevent compiler from eliminating loads in a loop
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+    auto np = internal::get_need_preempt_var();
+    // We aren't reading anything from the ring, so we don't need
+    // any barriers.
+    auto head = np->head.load(std::memory_order_relaxed);
+    auto tail = np->tail.load(std::memory_order_relaxed);
+    // Possible optimization: read head and tail in a single 64-bit load,
+    // and find a funky way to compare the two 32-bit halves.
+    return __builtin_expect(head != tail, false);
+#else
+    return true;
+#endif
+}
+
+thread_local int preempt_fd = -1;
+thread_local char* preempt_mmap = nullptr;
+thread_local uint64_t preempt_sz = 0;
+
+void setup_preempt_fd() {
+#if 0
+    std::string filepath = fmt::format("{}.{}.preempt", getpid(), this_shard_id());
+    preempt_fd = open(filepath.c_str(), O_RDWR | O_CREAT, (mode_t)0600);
+    if (preempt_fd == -1) {
+        perror(fmt::format("Error opening file for writing: {}", filepath).c_str());
+        exit(EXIT_FAILURE);
+    }
+    if (ftruncate(preempt_fd, 1<<30) == -1) {
+        perror(fmt::format("ftruncate: {}", filepath).c_str());
+        exit(EXIT_FAILURE);
+    }
+    preempt_mmap = (char*)mmap(0, 1 << 30, PROT_WRITE, MAP_SHARED, preempt_fd, 0);
+#else
+    std::string filepath = "bad.preempt";
+    preempt_fd = open(filepath.c_str(), O_RDONLY, (mode_t)0600);
+    preempt_mmap = (char*)mmap(0, 1 << 30, PROT_READ, MAP_SHARED, preempt_fd, 0);
+#endif
+    if (!preempt_mmap) {
+        perror(fmt::format("mmap: {}", filepath).c_str());
+        exit(EXIT_FAILURE);
+    }
+}
+
+void desetup_preempt_fd() {
+    munmap(preempt_mmap, 1 << 30);
+    close(preempt_fd);
+    preempt_fd = -1;
+    preempt_sz = 0;
+    preempt_mmap = nullptr;
+    std::string filepath = fmt::format("{}.{}.preempt", getpid(), this_shard_id());
+    unlink(filepath.c_str());
+}
+
+void emit(bool x) noexcept {
+    preempt_mmap[8 + preempt_sz++] = x;
+    *reinterpret_cast<uint64_t*>(preempt_mmap) = preempt_sz;
+}
+
+bool need_preempt() noexcept {
+    bool yes = need_preempt_default();
+    if (preempt_fd >= 0) {
+#if 0
+        emit(yes);
+#else
+        if (preempt_sz < *reinterpret_cast<uint64_t*>(preempt_mmap)) {
+            yes = preempt_mmap[8 + preempt_sz++];
+        } else {
+            yes = true;
+        }
+#endif
+    }
+    return yes;
+}
+
+thread_local std::function<bool()> need_preempt_fn = need_preempt_default;
 
 } // namespace seastar
