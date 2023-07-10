@@ -43,6 +43,7 @@
 #include <spawn.h>
 #include <memory>
 #include <chrono>
+#include <optional>
 #include <sys/uio.h>
 
 #include <seastar/net/socket_defs.hh>
@@ -437,8 +438,10 @@ public:
             set(std::forward<Rest>(rest)...);
         }
         void set(stack_size ss) { _stack_size = ss; }
+        void set(cpu_set_t affinity) { _affinity = affinity; }
     private:
         stack_size _stack_size;
+        std::optional<cpu_set_t> _affinity;
         friend class posix_thread;
     };
 };

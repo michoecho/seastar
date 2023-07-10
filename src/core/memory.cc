@@ -121,6 +121,13 @@ __thread volatile int critical_alloc_section = 0;
 
 #endif  // SEASTAR_ENABLE_ALLOC_FAILURE_INJECTION
 
+numa_layout
+merge(numa_layout one, numa_layout two) {
+    // There's no chance to merge, so just concatenate
+    one.ranges.insert(one.ranges.end(), two.ranges.begin(), two.ranges.end());
+    return one;
+}
+
 } // namespace internal
 
 }
@@ -1512,7 +1519,8 @@ void disable_large_allocation_warning() {
     get_cpu_mem().large_allocation_warning_threshold = std::numeric_limits<size_t>::max();
 }
 
-void configure(std::vector<resource::memory> m, bool mbind,
+internal::numa_layout
+configure(std::vector<resource::memory> m, bool mbind,
         optional<std::string> hugetlbfs_path) {
     // we need to make sure cpu_mem is initialize since configure calls cpu_mem.resize
     // and we might reach configure without ever allocating, hence without ever calling
@@ -1522,6 +1530,7 @@ void configure(std::vector<resource::memory> m, bool mbind,
     // verify that here.
     init_cpu_mem();
     is_reactor_thread = true;
+    internal::numa_layout ret_layout;
     size_t total = 0;
     for (auto&& x : m) {
         total += x.bytes;
@@ -1542,7 +1551,8 @@ void configure(std::vector<resource::memory> m, bool mbind,
 #ifdef SEASTAR_HAVE_NUMA
         unsigned long nodemask = 1UL << x.nodeid;
         if (mbind) {
-            auto r = ::mbind(get_cpu_mem().mem() + pos, x.bytes,
+            auto start = get_cpu_mem().mem() + pos;
+            auto r = ::mbind(start, x.bytes,
                             MPOL_PREFERRED,
                             &nodemask, std::numeric_limits<unsigned long>::digits,
                             MPOL_MF_MOVE);
@@ -1553,10 +1563,12 @@ void configure(std::vector<resource::memory> m, bool mbind,
                 std::cerr << "WARNING: unable to mbind shard memory; performance may suffer: "
                         << err << std::endl;
             }
+            ret_layout.ranges.push_back({.start = start, .end = start + x.bytes, .numa_node_id = x.nodeid});
         }
 #endif
         pos += x.bytes;
     }
+    return ret_layout;
 }
 
 statistics stats() {
@@ -2268,7 +2280,9 @@ reclaimer::~reclaimer() {
 void set_reclaim_hook(std::function<void (std::function<void ()>)> hook) {
 }
 
-void configure(std::vector<resource::memory> m, bool mbind, std::optional<std::string> hugepages_path) {
+internal::numa_layout
+configure(std::vector<resource::memory> m, bool mbind, std::optional<std::string> hugepages_path) {
+    return {};
 }
 
 statistics stats() {
