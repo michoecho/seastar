@@ -133,7 +133,7 @@ namespace rpc {
   }
 
   future<> connection::send_entry(outgoing_entry& d) {
-      if (_propagate_timeout) {
+      if (d.buf.size && _propagate_timeout) {
           static_assert(snd_buf::chunk_size >= sizeof(uint64_t), "send buffer chunk size is too small");
           if (_timeout_negotiated) {
               auto expire = d.t.get_timeout();
@@ -466,6 +466,7 @@ namespace rpc {
                   }
                   auto eb = compressor->decompress(std::move(compressed_data));
                   if (eb.size == 0) {
+                      // Skip empty frame. Recursively restart the function, as if the empty frame didn't happen.
                       return read_frame_compressed<FrameType>(info, compressor, in);
                   }
                   net::packet p;
@@ -666,7 +667,7 @@ namespace rpc {
           // supported features go here
           case protocol_features::COMPRESS:
               if (_options.compressor_factory) {
-                  _compressor = _options.compressor_factory->negotiate(e.second, false);
+                  _compressor = _options.compressor_factory->negotiate(e.second, false, &_compressor_needs_progress);
               }
               if (!_compressor) {
                   throw std::runtime_error(format("RPC server responded with compression {} - unsupported", e.second));
@@ -977,6 +978,9 @@ namespace rpc {
               } else {
                   abort_all_streams();
               }
+          }).finally([this] {
+            _compressor_needs_progress.broken();
+            return std::move(_compressor_bumper_exit);
           }).finally([this]{
               _stopped.set_value();
           });
@@ -1007,7 +1011,7 @@ namespace rpc {
           // supported features go here
           case protocol_features::COMPRESS: {
               if (get_server()._options.compressor_factory) {
-                  _compressor = get_server()._options.compressor_factory->negotiate(e.second, true);
+                  _compressor = get_server()._options.compressor_factory->negotiate(e.second, true, &_compressor_needs_progress);
                   if (_compressor) {
                        ret[protocol_features::COMPRESS] = _compressor->name();
                   }
@@ -1189,6 +1193,9 @@ future<> server::connection::send_unknown_verb_reply(std::optional<rpc_clock_typ
               } else {
                   return abort_all_streams();
               }
+          }).finally([this] {
+              _compressor_needs_progress.broken();
+              return std::move(_compressor_bumper_exit);
           }).finally([this] {
               _stopped.set_value();
           });
