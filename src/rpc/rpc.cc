@@ -133,7 +133,7 @@ namespace rpc {
   }
 
   future<> connection::send_entry(outgoing_entry& d) {
-      if (_propagate_timeout) {
+      if (d.buf.size && _propagate_timeout) {
           static_assert(snd_buf::chunk_size >= sizeof(uint64_t), "send buffer chunk size is too small");
           if (_timeout_negotiated) {
               auto expire = d.t.get_timeout();
@@ -459,7 +459,7 @@ namespace rpc {
               }
               auto ptr = compress_header.get();
               auto size = read_le<uint32_t>(ptr);
-              return read_rcv_buf(in, size).then([this, size, &compressor, info] (rcv_buf compressed_data) {
+              return read_rcv_buf(in, size).then([this, size, &compressor, info, &in] (rcv_buf compressed_data) {
                   if (compressed_data.size != size) {
                       _logger(info, format("unexpected eof on a {} while reading compressed data: expected {:d} got {:d}", FrameType::role(), size, compressed_data.size));
                       return FrameType::empty_value();
@@ -666,7 +666,8 @@ namespace rpc {
           // supported features go here
           case protocol_features::COMPRESS:
               if (_options.compressor_factory) {
-                  _compressor = _options.compressor_factory->negotiate(e.second, false);
+                  _compressor = _options.compressor_factory->negotiate(e.second, false, &_compressor_needs_progress);
+                  
               }
               if (!_compressor) {
                   throw std::runtime_error(format("RPC server responded with compression {} - unsupported", e.second));
@@ -977,6 +978,9 @@ namespace rpc {
               } else {
                   abort_all_streams();
               }
+          }).finally([this] {
+            _compressor_needs_progress.broken();
+            return std::move(_compressor_bumper_exit);
           }).finally([this]{
               _stopped.set_value();
           });
@@ -1007,7 +1011,7 @@ namespace rpc {
           // supported features go here
           case protocol_features::COMPRESS: {
               if (get_server()._options.compressor_factory) {
-                  _compressor = get_server()._options.compressor_factory->negotiate(e.second, true);
+                  _compressor = get_server()._options.compressor_factory->negotiate(e.second, true, &_compressor_needs_progress);
                   if (_compressor) {
                        ret[protocol_features::COMPRESS] = _compressor->name();
                   }

@@ -279,6 +279,8 @@ protected:
     outgoing_entry::container_t _outgoing_queue;
     size_t _outgoing_queue_size = 0;
     std::unique_ptr<compressor> _compressor;
+    condition_variable _compressor_needs_progress;
+    future<> _compressor_bumper_exit;
     bool _propagate_timeout = false;
     bool _timeout_negotiated = false;
     // stream related fields
@@ -317,7 +319,7 @@ public:
     connection(connected_socket&& fd, const logger& l, void* s, connection_id id = invalid_connection_id) : connection(l, s, id) {
         set_socket(std::move(fd));
     }
-    connection(const logger& l, void* s, connection_id id = invalid_connection_id) : _logger(l), _serializer(s), _id(id) {}
+    connection(const logger& l, void* s, connection_id id = invalid_connection_id) : _logger(l), _serializer(s), _compressor_bumper_exit(spawn_compressor_bumper()), _id(id) {}
     virtual ~connection() {}
     size_t outgoing_queue_length() const noexcept {
         return _outgoing_queue_size;
@@ -382,6 +384,15 @@ public:
         _outgoing_queue.push_back(*dummy);
         _outgoing_queue_ready = dummy->done.get_future();
         (void)p.get_future().then([dummy = std::move(dummy)] { dummy->done.set_value(); });
+    }
+    future<> spawn_compressor_bumper() {
+        return seastar::repeat([this] {
+            return _compressor_needs_progress.wait().then([this] () {
+                return send({})
+                    .handle_exception([] (const auto&) {})
+                    .then([] () { return stop_iteration::no; });
+            });
+        }).handle_exception_type([] (const broken_condition_variable&) {});
     }
 };
 

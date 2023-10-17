@@ -41,6 +41,8 @@
 
 namespace seastar {
 
+class condition_variable;
+
 namespace rpc {
 
 using rpc_clock_type = lowres_clock;
@@ -288,6 +290,9 @@ public:
         // return feature string that will be sent as part of protocol negotiation
         virtual const sstring& supported() const = 0;
         // negotiate compress algorithm
+        virtual std::unique_ptr<compressor> negotiate(sstring feature, bool is_server, condition_variable* compressor_needs_progress) {
+            return negotiate(feature, is_server);
+        }
         virtual std::unique_ptr<compressor> negotiate(sstring feature, bool is_server) const = 0;
     };
 };
