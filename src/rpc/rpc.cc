@@ -298,7 +298,7 @@ namespace rpc {
               }
 
               p->uncancellable();
-              return send_entry(*p).then_wrapped([this, p = std::move(p)] (auto f) mutable {
+              return futurize_invoke([this, &pp = *p] { return send_entry(pp); }).then_wrapped([this, p = std::move(p)] (auto f) mutable {
                   if (f.failed()) {
                       f.ignore_ready_future();
                       abort();
