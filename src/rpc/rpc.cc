@@ -465,6 +465,9 @@ namespace rpc {
                       return FrameType::empty_value();
                   }
                   auto eb = compressor->decompress(std::move(compressed_data));
+                  if (eb.size == 0) {
+                      return read_frame_compressed<FrameType>(info, compressor, in);
+                  }
                   net::packet p;
                   auto* one = std::get_if<temporary_buffer<char>>(&eb.bufs);
                   if (one) {
