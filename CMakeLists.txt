@@ -757,7 +757,7 @@ target_link_libraries (seastar
     c-ares::cares
     cryptopp::cryptopp
     fmt::fmt
-    lz4::lz4
+    #lz4::lz4
     SourceLocation::source_location
   PRIVATE
     ${CMAKE_DL_LIBS}
