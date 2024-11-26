@@ -38,6 +38,9 @@ module seastar;
 #include <seastar/core/circular_buffer.hh>
 #include <seastar/util/noncopyable_function.hh>
 #include <seastar/core/metrics.hh>
+#include <seastar/util/log.hh>
+#include <seastar/core/smp.hh>
+#include <seastar/core/on_internal_error.hh>
 #endif
 
 namespace seastar {
