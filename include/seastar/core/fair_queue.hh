@@ -265,6 +265,17 @@ public:
     }
 
     const token_bucket_t& token_bucket() const noexcept { return _token_bucket; }
+
+    std::atomic<clock_type::time_point> _last_serviced = clock_type::now();
+    std::mutex _io_servicer_mutex;
+    std::vector<std::atomic<capacity_t>> _requested;
+    std::vector<std::atomic<capacity_t>> _cancelled;
+    std::vector<std::atomic<capacity_t>> _granted;
+    std::vector<capacity_t> _sortval;
+    std::vector<int> _heap;
+    std::vector<capacity_t> _prev_cancelled;
+    capacity_t _last_min = 0;
+    void maybe_service_io_scheduler();
 };
 
 /// \brief Fair queuing class
@@ -330,6 +341,8 @@ private:
     std::vector<std::unique_ptr<priority_class_data>> _priority_classes;
     size_t _nr_classes = 0;
     capacity_t _last_accumulated = 0;
+    capacity_t _queued_cap = 0;
+    capacity_t _reaped = 0;
 
     /*
      * When the shared capacity os over the local queue delays

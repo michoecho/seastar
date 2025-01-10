@@ -19,6 +19,7 @@
  * Copyright 2019 ScyllaDB
  */
 
+#include "seastar/core/reactor.hh"
 #ifdef SEASTAR_MODULE
 module;
 #endif
@@ -38,6 +39,7 @@ module seastar;
 #include <seastar/core/circular_buffer.hh>
 #include <seastar/util/noncopyable_function.hh>
 #include <seastar/core/metrics.hh>
+#include <seastar/core/smp.hh>
 #endif
 
 namespace seastar {
@@ -102,9 +104,20 @@ fair_group::fair_group(config cfg, unsigned nr_queues)
                         tokens_capacity(cfg.min_tokens)
                        )
         , _per_tick_threshold(_token_bucket.limit() / nr_queues)
+        , _requested(smp::count)
+        , _cancelled(smp::count)
+        , _granted(smp::count)
+        , _sortval(smp::count)
+        , _heap(smp::count)
+        , _prev_cancelled(smp::count)
 {
     if (tokens_capacity(cfg.min_tokens) > _token_bucket.threshold()) {
         throw std::runtime_error("Fair-group replenisher limit is lower than threshold");
+    }
+    for (int i = 0; i < smp::count; ++i) {
+        std::atomic_init(&_requested[i], 0);
+        std::atomic_init(&_cancelled[i], 0);
+        std::atomic_init(&_granted[i], 0);
     }
 }
 
@@ -223,37 +236,6 @@ void fair_queue::unplug_class(class_id cid) noexcept {
     unplug_priority_class(*_priority_classes[cid]);
 }
 
-auto fair_queue::grab_pending_capacity(const fair_queue_entry& ent) noexcept -> grab_result {
-    _group.maybe_replenish_capacity(_group_replenish);
-
-    if (_group.capacity_deficiency(_pending->head)) {
-        return grab_result::pending;
-    }
-
-    capacity_t cap = ent._capacity;
-    if (cap > _pending->cap) {
-        return grab_result::cant_preempt;
-    }
-
-    _pending.reset();
-    return grab_result::grabbed;
-}
-
-auto fair_queue::grab_capacity(const fair_queue_entry& ent) noexcept -> grab_result {
-    if (_pending) {
-        return grab_pending_capacity(ent);
-    }
-
-    capacity_t cap = ent._capacity;
-    capacity_t want_head = _group.grab_capacity(cap);
-    if (_group.capacity_deficiency(want_head)) {
-        _pending.emplace(want_head, cap);
-        return grab_result::pending;
-    }
-
-    return grab_result::grabbed;
-}
-
 void fair_queue::register_priority_class(class_id id, uint32_t shares) {
     if (id >= _priority_classes.size()) {
         _priority_classes.resize(id + 1);
@@ -297,12 +279,14 @@ void fair_queue::queue(class_id id, fair_queue_entry& ent) noexcept {
         push_priority_class_from_idle(pc);
     }
     pc._queue.push_back(ent);
+    _queued_cap += ent.capacity();
 }
 
 void fair_queue::notify_request_finished(fair_queue_entry::capacity_t cap) noexcept {
 }
 
 void fair_queue::notify_request_cancelled(fair_queue_entry& ent) noexcept {
+    _queued_cap -= ent._capacity;
     ent._capacity = 0;
 }
 
@@ -326,11 +310,86 @@ fair_queue::clock_type::time_point fair_queue::next_pending_aio() const noexcept
     return std::chrono::steady_clock::time_point::max();
 }
 
-void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
-    capacity_t dispatched = 0;
-    boost::container::small_vector<priority_class_ptr, 2> preempt;
+void fair_group::maybe_service_io_scheduler() {
+    auto now = clock_type::now();
+    auto last_serviced = _last_serviced.load(std::memory_order_relaxed);
+    if (now < last_serviced + std::chrono::microseconds(100)) {
+        return;
+    }
+    std::unique_lock<std::mutex> lock(_io_servicer_mutex, std::defer_lock);
+    if (!lock.try_lock()) {
+        return;
+    }
+    _last_serviced.store(now, std::memory_order_relaxed);
+    replenish_capacity(now);
+    auto available_capacity = internal::wrapping_difference(_token_bucket.head(), _token_bucket.tail());
+    capacity_t total_cancelled = 0;
+    capacity_t grabbed = 0;
+    _heap.resize(0);
+    for (int i = 0; i < smp::count; ++i) {
+        auto c = _cancelled[i].load(std::memory_order::acquire);
+        auto cancel_diff = c - _prev_cancelled[i];
+        total_cancelled += cancel_diff;
+        _prev_cancelled[i] = c;
+        auto req = _requested[i].load(std::memory_order_relaxed);
+        auto grn = _granted[i].load(std::memory_order_relaxed);
+        if (req != grn) {
+            _sortval[i] = std::max<capacity_t>(_sortval[i], _last_min);
+            _heap.push_back(i);
+            io_log.trace("heappush {}", i);
+        }
+        io_log.trace("Shard {}: req={} grn={} srt={} cancel={} cled={}", i, req, grn, _sortval[i], cancel_diff, c);
+        _sortval[i] -= cancel_diff;
+    }
+    io_log.trace("Have c={} ac={}", total_cancelled, available_capacity);
+    auto cmp = [&] (int a, int b) { return _sortval[a] > _sortval[b]; };
+    std::make_heap(_heap.begin(), _heap.end(), cmp);
+    while (!_heap.empty()) {
+        auto candidate = _heap.front();
+        io_log.trace("heap={}", fmt::join(_heap, ","));
+        std::pop_heap(_heap.begin(), _heap.end(), cmp);
+        _last_min = std::max(_sortval[candidate], _last_min);
+        auto thr = 2200000;
+        auto requested = _requested[candidate].load(std::memory_order_relaxed);
+        auto granted = _granted[candidate].load(std::memory_order_relaxed);
+        assert(requested != granted);
+        auto request = requested - granted;
+        capacity_t grant = 0;
+        if (grabbed + request <= total_cancelled + available_capacity) {
+            grant = request;
+        } else if (grabbed + thr <= total_cancelled + available_capacity) {
+            grant = thr;
+        }
+        if (grant == 0) {
+            break;
+        }
+        grabbed += grant;
+        granted += grant;
+        _sortval[candidate] += grant;
+        _granted[candidate].store(granted, std::memory_order_relaxed);
+        if (granted < requested) {
+            std::push_heap(_heap.begin(), _heap.end(), cmp);
+        } else {
+            _heap.pop_back();
+        }
+    }
+    if (grabbed <= total_cancelled) {
+        _token_bucket.refund(total_cancelled - grabbed);
+    } else {
+        _token_bucket.grab(grabbed - total_cancelled);
+    }
+    lock.unlock();
+    io_log.debug("Took {}s", std::chrono::duration<double>(clock_type::now() - now).count());
+}
 
-    while (!_handles.empty() && (dispatched < _group.per_tick_grab_threshold())) {
+void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
+    if (!_handles.empty()) {
+        _group.maybe_service_io_scheduler();
+    }
+    capacity_t available_tokens = _group._granted[this_shard_id()].load(std::memory_order_relaxed)
+        - _reaped;
+
+    while (!_handles.empty()) {
         priority_class_data& h = *_handles.top();
         if (h._queue.empty() || !h._plugged) {
             pop_priority_class(h);
@@ -338,16 +397,28 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
         }
 
         auto& req = h._queue.front();
-        auto gr = grab_capacity(req);
-        if (gr == grab_result::pending) {
+
+        if (available_tokens < req._capacity) {
+            auto refund = available_tokens;
+            available_tokens = 0;
+
+            _reaped += refund;
+
+            using namespace std::chrono_literals;
+            auto humble_grab = req._capacity + _group.fixed_point_factor * fair_group::token_bucket_t::rate_cast(600us).count();
+            auto next_grab = std::min<capacity_t>(_queued_cap, humble_grab);
+
+            auto prev_requested = _group._requested[this_shard_id()].load(std::memory_order_relaxed);
+            auto next_requested = std::max<capacity_t>(prev_requested, _reaped + next_grab);
+            _group._requested[this_shard_id()].store(next_requested, std::memory_order_relaxed);
+
+            auto prev_cancelled = _group._cancelled[this_shard_id()].load(std::memory_order_relaxed);
+            _group._cancelled[this_shard_id()].store(prev_cancelled + refund, std::memory_order_release);
+
             break;
         }
-
-        if (gr == grab_result::cant_preempt) {
-            pop_priority_class(h);
-            preempt.emplace_back(&h);
-            continue;
-        }
+        _reaped += req._capacity;
+        available_tokens -= req._capacity;
 
         _last_accumulated = std::max(h._accumulated, _last_accumulated);
         pop_priority_class(h);
@@ -374,7 +445,7 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
         }
         h._accumulated += req_cost;
         h._pure_accumulated += req_cap;
-        dispatched += req_cap;
+        _queued_cap -= req_cap;
 
         cb(req);
 
@@ -383,8 +454,10 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
         }
     }
 
-    for (auto&& h : preempt) {
-        push_priority_class(*h);
+    if (available_tokens) {
+        _reaped += available_tokens;
+        auto prev_cancelled = _group._cancelled[this_shard_id()].load(std::memory_order_relaxed);
+        _group._cancelled[this_shard_id()].store(prev_cancelled + available_tokens, std::memory_order_release);
     }
 }
 

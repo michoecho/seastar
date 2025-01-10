@@ -114,9 +114,10 @@ class shared_token_bucket {
     using rovers_t = rovers<T, Capped>;
     static_assert(rovers_t::atomic_rover::is_always_lock_free);
     rovers_t _rovers;
-
+public:
     T tail() const noexcept { return _rovers.tail.load(std::memory_order_relaxed); }
     T head() const noexcept { return _rovers.head.load(std::memory_order_relaxed); }
+public:
 
     /*
      * Need to make sure that the multiplication in accumulated_in() doesn't
@@ -153,6 +154,10 @@ public:
 
     T grab(T tokens) noexcept {
         return fetch_add(_rovers.tail, tokens) + tokens;
+    }
+
+    void refund(T tokens) noexcept {
+        fetch_add(_rovers.head, std::min(tokens, _rovers.max_extra(_replenish_limit)));
     }
 
     void release(T tokens) noexcept {
