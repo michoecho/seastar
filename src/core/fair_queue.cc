@@ -19,6 +19,8 @@
  * Copyright 2019 ScyllaDB
  */
 
+#include "seastar/core/internal/io_request.hh"
+#include "seastar/util/log.hh"
 #ifdef SEASTAR_MODULE
 module;
 #endif
@@ -115,6 +117,10 @@ auto fair_group::grab_capacity(capacity_t cap) noexcept -> capacity_t {
 
 void fair_group::replenish_capacity(clock_type::time_point now) noexcept {
     _token_bucket.replenish(now);
+}
+
+void fair_group::refund_tokens(capacity_t cap) noexcept {
+    _token_bucket.refund(cap);
 }
 
 void fair_group::maybe_replenish_capacity(clock_type::time_point& local_ts) noexcept {
@@ -214,35 +220,22 @@ void fair_queue::unplug_class(class_id cid) noexcept {
     unplug_priority_class(*_priority_classes[cid]);
 }
 
-auto fair_queue::grab_pending_capacity(const fair_queue_entry& ent) noexcept -> grab_result {
-    _group.maybe_replenish_capacity(_group_replenish);
-
-    if (_group.capacity_deficiency(_pending->head)) {
-        return grab_result::pending;
+auto fair_queue::reap_pending_capacity() noexcept -> capacity_t {
+    capacity_t result = 0;
+    if (_pending.cap) {
+        capacity_t deficiency = _group.capacity_deficiency(_pending.head);
+        if (deficiency <= _pending.cap) {
+            result = _pending.cap - deficiency;
+            _pending.cap = deficiency;
+        }
     }
-
-    capacity_t cap = ent._capacity;
-    if (cap > _pending->cap) {
-        return grab_result::cant_preempt;
-    }
-
-    _pending.reset();
-    return grab_result::grabbed;
+    return result;
 }
 
-auto fair_queue::grab_capacity(const fair_queue_entry& ent) noexcept -> grab_result {
-    if (_pending) {
-        return grab_pending_capacity(ent);
-    }
-
+auto fair_queue::grab_capacity(const fair_queue_entry& ent) noexcept -> void {
     capacity_t cap = ent._capacity;
     capacity_t want_head = _group.grab_capacity(cap);
-    if (_group.capacity_deficiency(want_head)) {
-        _pending.emplace(want_head, cap);
-        return grab_result::pending;
-    }
-
-    return grab_result::grabbed;
+    _pending = pending{want_head, cap};
 }
 
 void fair_queue::register_priority_class(class_id id, uint32_t shares) {
@@ -298,7 +291,7 @@ void fair_queue::notify_request_cancelled(fair_queue_entry& ent) noexcept {
 }
 
 fair_queue::clock_type::time_point fair_queue::next_pending_aio() const noexcept {
-    if (_pending) {
+    if (_pending.cap) {
         /*
          * We expect the disk to release the ticket within some time,
          * but it's ... OK if it doesn't -- the pending wait still
@@ -309,7 +302,7 @@ fair_queue::clock_type::time_point fair_queue::next_pending_aio() const noexcept
          * which's sub-optimal. The expectation is that we think disk
          * works faster, than it really does.
          */
-        auto over = _group.capacity_deficiency(_pending->head);
+        auto over = _group.capacity_deficiency(_pending.head);
         auto ticks = _group.capacity_duration(over);
         return std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::microseconds>(ticks);
     }
@@ -317,11 +310,41 @@ fair_queue::clock_type::time_point fair_queue::next_pending_aio() const noexcept
     return std::chrono::steady_clock::time_point::max();
 }
 
+// This function is called by the shard on every poll.
+// It picks up tokens granted by the group, spends available tokens on IO dispatches,
+// and makes a reservation for more tokens, if needed.
+//
+// Reservations are done in batches of size `_group.per_tick_grab_threshold()`.
+// During contention, in an average moment in time each contending shard can be expected to
+// be holding a reservation of such size after the current head of the token bucket.
+//
+// A shard which is currently calling `dispatch_requests()` can expect a latency
+// of at most `nr_contenders * _group.per_tick_grab_threshold()` before its next reservation is fulfilled.
+// If a shard calls `dispatch_requests()` at least once per X total tokens, it should receive bandwidth
+// of at least `_group.per_tick_grab_threshold() / (X + nr_contenders * _group.per_tick_grab_threshold())`.
+//
+// A shard which is polling continuously should be able to grab at least its fair share of the disk for itself.
+//
+// Given a task quota of 500us and IO latency goal of 750 us,
+// a CPU-starved shard should still be able to grab at least 60% of its fair share in the worst case.
 void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
-    capacity_t dispatched = 0;
-    boost::container::small_vector<priority_class_ptr, 2> preempt;
+    _group.maybe_replenish_capacity(_group_replenish);
 
-    while (!_handles.empty() && (dispatched < _group.per_tick_grab_threshold())) {
+    const uint64_t max_unamortized_reservation = _group.per_tick_grab_threshold();
+    _balance += reap_pending_capacity();
+
+    while (!_handles.empty() || _balance < 0) {
+        if (_balance < 0) {
+            if (_pending.cap == 0) {
+                grab_capacity(max_unamortized_reservation);
+                _balance += reap_pending_capacity();
+                if (_balance >= 0) {
+                    continue;
+                }
+            }
+            break;
+        }
+
         priority_class_data& h = *_handles.top();
         if (h._queue.empty() || !h._plugged) {
             pop_priority_class(h);
@@ -329,16 +352,7 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
         }
 
         auto& req = h._queue.front();
-        auto gr = grab_capacity(req);
-        if (gr == grab_result::pending) {
-            break;
-        }
-
-        if (gr == grab_result::cant_preempt) {
-            pop_priority_class(h);
-            preempt.emplace_back(&h);
-            continue;
-        }
+        _balance -= req._capacity;
 
         _last_accumulated = std::max(h._accumulated, _last_accumulated);
         pop_priority_class(h);
@@ -365,7 +379,6 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
         }
         h._accumulated += req_cost;
         h._pure_accumulated += req_cap;
-        dispatched += req_cap;
 
         cb(req);
 
@@ -374,8 +387,9 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
         }
     }
 
-    for (auto&& h : preempt) {
-        push_priority_class(*h);
+    assert(_handles.empty() || _balance < 0);
+    if (_balance > 0) {
+        _group.refund_tokens(std::exchange(_balance, 0));
     }
 }
 
