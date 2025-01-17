@@ -178,16 +178,7 @@ void fair_queue::push_priority_class(priority_class_data& pc) noexcept {
 
 void fair_queue::push_priority_class_from_idle(priority_class_data& pc) noexcept {
     if (!pc._queued) {
-        // Don't let the newcomer monopolize the disk for more than tau
-        // duration. For this estimate how many capacity units can be
-        // accumulated with the current class shares per rate resulution
-        // and scale it up to tau.
-        capacity_t max_deviation = fair_group::fixed_point_factor / pc._shares * fair_group::token_bucket_t::rate_cast(_config.tau).count();
-        // On start this deviation can go to negative values, so not to
-        // introduce extra if's for that short corner case, use signed
-        // arithmetics and make sure the _accumulated value doesn't grow
-        // over signed maximum (see overflow check below)
-        pc._accumulated = std::max<signed_capacity_t>(_last_accumulated - max_deviation, pc._accumulated);
+        pc._accumulated = std::max<capacity_t>(_last_accumulated, pc._accumulated);
         _handles.assert_enough_capacity();
         _handles.push(&pc);
         pc._queued = true;
