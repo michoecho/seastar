@@ -776,6 +776,7 @@ add_library (seastar
   src/util/program-options.cc
   src/util/read_first_line.cc
   src/util/tmp_file.cc
+  src/util/tracer.cc
   src/util/short_streams.cc
   src/websocket/server.cc
   )
