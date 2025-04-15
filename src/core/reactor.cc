@@ -173,6 +173,7 @@ module seastar;
 #include <seastar/util/spinlock.hh>
 #include <seastar/util/internal/iovec_utils.hh>
 #include <seastar/util/internal/magic.hh>
+#include <seastar/util/tracer.hh>
 #include "core/reactor_backend.hh"
 #include "core/syscall_result.hh"
 #include "core/thread_pool.hh"
@@ -185,6 +186,9 @@ module seastar;
 #include <seastar/util/assert.hh>
 
 namespace seastar {
+
+thread_local uint64_t fresh_task_id = 1;
+thread_local uint64_t current_task_id = 0;
 
 static_assert(posix::shutdown_mask(SHUT_RD) == posix::rcv_shutdown);
 static_assert(posix::shutdown_mask(SHUT_WR) == posix::snd_shutdown);
@@ -3968,6 +3972,7 @@ void smp::allocate_reactor(unsigned id, reactor_backend_selector rbs, reactor_co
     SEASTAR_ASSERT(r == 0);
     *internal::this_shard_id_ptr() = id;
     local_engine = new (buf) reactor(this->shared_from_this(), _alien, id, std::move(rbs), cfg);
+    local_tracer = new tracer();
     reactor_holder.reset(local_engine);
 }
 
@@ -4771,6 +4776,7 @@ bool smp::pure_poll_queues() {
 }
 
 __thread reactor* local_engine;
+__thread tracer* local_tracer;
 
 void report_exception(std::string_view message, std::exception_ptr eptr) noexcept {
     seastar_logger.error("{}: {}", message, eptr);

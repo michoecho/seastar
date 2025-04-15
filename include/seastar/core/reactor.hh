@@ -59,6 +59,7 @@
 #include <seastar/util/modules.hh>
 #include <seastar/util/noncopyable_function.hh>
 #include <seastar/util/std-compat.hh>
+#include <seastar/util/tracer.hh>
 #include "internal/pollable_fd.hh"
 
 #ifndef SEASTAR_MODULE
@@ -706,6 +707,8 @@ public:
 };
 
 extern __thread reactor* local_engine;
+extern __thread size_t task_quota;
+extern __thread tracer* local_tracer;
 
 SEASTAR_MODULE_EXPORT
 inline reactor& engine() {
