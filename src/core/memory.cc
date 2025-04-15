@@ -125,6 +125,7 @@ module seastar;
 #include <seastar/core/posix.hh>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/util/backtrace.hh>
+#include <seastar/util/tracer.hh>
 #endif
 #endif
 
@@ -133,6 +134,8 @@ module seastar;
 #else
 #define dassert(expr) do {} while(false)
 #endif
+
+#define SAFE_TRACEPOINT(...) do { if (local_tracer) TRACEPOINT(__VA_ARGS__); } while(0)
 
 namespace seastar {
 
@@ -812,10 +815,12 @@ cpu_pages::allocate_large_and_trim(unsigned n_pages, bool should_sample) {
     // Avoid exercising the reclaimers for requests we'll not be able to satisfy
     // nr_pages might be zero during startup, so check for that too
     if (nr_pages && n_pages >= nr_pages) {
+        SAFE_TRACEPOINT(tracer::event_level::INFO, "allocate_large_and_trim:fail", "n_pages", n_pages, "should_sample", should_sample);
         return nullptr;
     }
     page* span = find_and_unlink_span_reclaiming(n_pages);
     if (!span) {
+        SAFE_TRACEPOINT(tracer::event_level::INFO, "allocate_large_and_trim:fail", "n_pages", n_pages, "should_sample", should_sample);
         return nullptr;
     }
     auto span_size = span->span_size;
@@ -1327,6 +1332,7 @@ void cpu_pages::resize(size_t new_size, allocate_system_memory_fn alloc_memory) 
 }
 
 reclaiming_result cpu_pages::run_reclaimers(reclaimer_scope scope, size_t n_pages) {
+    SAFE_TRACEPOINT(tracer::event_level::INFO, "run_reclaimers:enter", "n_pages", n_pages, "scope", scope == reclaimer_scope::sync);
     auto target = std::max<size_t>(nr_free_pages + n_pages, min_free_pages);
     reclaiming_result result = reclaiming_result::reclaimed_nothing;
     while (nr_free_pages < target) {
@@ -1338,10 +1344,12 @@ reclaiming_result cpu_pages::run_reclaimers(reclaimer_scope scope, size_t n_page
             }
         }
         if (!made_progress) {
+            SAFE_TRACEPOINT(tracer::event_level::INFO, "run_reclaimers:exit", "result", result == reclaiming_result::reclaimed_something);
             return result;
         }
         result = reclaiming_result::reclaimed_something;
     }
+    SAFE_TRACEPOINT(tracer::event_level::INFO, "run_reclaimers:exit", "result", result == reclaiming_result::reclaimed_something);
     return result;
 }
 
