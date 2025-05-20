@@ -43,7 +43,7 @@ void alloc_failure_injector::fail() {
     _failed = true;
     cancel();
     if (log.is_enabled(log_level::trace)) {
-        log.trace("Failing at {}", current_backtrace());
+        LOGMACRO(log, log_level::trace, "Failing at {}", current_backtrace());
     }
     _on_alloc_failure();
 }

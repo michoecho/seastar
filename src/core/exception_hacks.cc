@@ -135,7 +135,7 @@ void log_exception_trace() noexcept {
     static thread_local bool nested = false;
     if (!nested && exception_logger.is_enabled(log_level::trace)) {
         nested = true;
-        exception_logger.trace("Throw exception at:\n{}", current_backtrace());
+        LOGMACRO(exception_logger, log_level::trace, "Throw exception at:\n{}", current_backtrace());
         nested = false;
     }
 }

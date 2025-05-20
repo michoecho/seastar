@@ -65,7 +65,7 @@ SEASTAR_THREAD_TEST_CASE(test_queue_pop_eventually) {
     auto start = std::chrono::system_clock::now();
     auto pusher = repeat([&] {
         auto&& data = pushed;
-        testlog.trace("pusher: full={} empty={} stop={}", q.full(), q.empty(), stop);
+        LOGMACRO(testlog, log_level::trace, "pusher: full={} empty={} stop={}", q.full(), q.empty(), stop);
         return q.push_eventually(std::move(data)).then([&] {
             pushed++;
             if (stop && !q.empty()) {
@@ -77,7 +77,7 @@ SEASTAR_THREAD_TEST_CASE(test_queue_pop_eventually) {
         });
     });
     auto popper = repeat([&] {
-        testlog.trace("popper: full={} empty={} stop={}", q.full(), q.empty(), stop);
+        LOGMACRO(testlog, log_level::trace, "popper: full={} empty={} stop={}", q.full(), q.empty(), stop);
         if (q.empty()) {
             if (pusher_done) {
                 testlog.debug("popper done");

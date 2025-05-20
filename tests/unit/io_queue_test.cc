@@ -375,9 +375,9 @@ static void show_request(const internal::io_request& req, void* buf_off, std::st
     }
 
     const auto& op = req.as<internal::io_request::operation::readv>();
-    seastar_logger.trace("{}{} iovecs on req:", pfx, op.iov_len);
+    LOGMACRO(seastar_logger, log_level::trace, "{}{} iovecs on req:", pfx, op.iov_len);
     for (unsigned i = 0; i < op.iov_len; i++) {
-        seastar_logger.trace("{}  base={} len={}", pfx, reinterpret_cast<uintptr_t>(op.iovec[i].iov_base) - reinterpret_cast<uintptr_t>(buf_off), op.iovec[i].iov_len);
+        LOGMACRO(seastar_logger, log_level::trace, "{}  base={} len={}", pfx, reinterpret_cast<uintptr_t>(op.iovec[i].iov_base) - reinterpret_cast<uintptr_t>(buf_off), op.iovec[i].iov_len);
     }
 }
 
@@ -386,12 +386,12 @@ static void show_request_parts(const std::vector<internal::io_request::part>& pa
         return;
     }
 
-    seastar_logger.trace("{} parts", parts.size());
+    LOGMACRO(seastar_logger, log_level::trace, "{} parts", parts.size());
     for (const auto& p : parts) {
-        seastar_logger.trace("  size={} iovecs={}", p.size, p.iovecs.size());
-        seastar_logger.trace("  {} iovecs on part:", p.iovecs.size());
+        LOGMACRO(seastar_logger, log_level::trace, "  size={} iovecs={}", p.size, p.iovecs.size());
+        LOGMACRO(seastar_logger, log_level::trace, "  {} iovecs on part:", p.iovecs.size());
         for (const auto& iov : p.iovecs) {
-            seastar_logger.trace("    base={} len={}", reinterpret_cast<uintptr_t>(iov.iov_base) - reinterpret_cast<uintptr_t>(buf_off), iov.iov_len);
+            LOGMACRO(seastar_logger, log_level::trace, "    base={} len={}", reinterpret_cast<uintptr_t>(iov.iov_base) - reinterpret_cast<uintptr_t>(buf_off), iov.iov_len);
         }
         show_request(p.req, buf_off, "  ");
     }

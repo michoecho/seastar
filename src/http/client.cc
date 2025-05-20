@@ -137,11 +137,11 @@ future<connection::reply_ptr> connection::recv_reply() {
         parser.init();
         return _read_buf.consume(parser).then([this, &parser] {
             if (parser.eof()) {
-                http_log.trace("Parsing response EOFed");
+                LOGMACRO(http_log, log_level::trace, "Parsing response EOFed");
                 throw std::system_error(ECONNABORTED, std::system_category());
             }
             if (parser.failed()) {
-                http_log.trace("Parsing response failed");
+                LOGMACRO(http_log, log_level::trace, "Parsing response failed");
                 throw httpd::response_parsing_exception(format("Invalid http server response. Reason: {}", parser.error_message()));
             }
 
@@ -201,7 +201,7 @@ future<> connection::close() {
     return when_all(_read_buf.close().handle_exception([](auto&&){}), _write_buf.close().handle_exception([](auto&&){})).discard_result().then([this] {
         auto la = _fd.local_address();
         return std::move(_closed).then([la = std::move(la)] {
-            http_log.trace("destroyed connection {}", la);
+            LOGMACRO(http_log, log_level::trace, "destroyed connection {}", la);
         });
     });
 }
@@ -227,7 +227,7 @@ future<client::connection_ptr> client::get_connection(abort_source* as) {
     if (!_pool.empty()) {
         connection_ptr con = _pool.front().shared_from_this();
         _pool.pop_front();
-        http_log.trace("pop http connection {} from pool", con->_fd.local_address());
+        LOGMACRO(http_log, log_level::trace, "pop http connection {} from pool", con->_fd.local_address());
         return make_ready_future<connection_ptr>(con);
     }
 
@@ -247,7 +247,7 @@ future<client::connection_ptr> client::get_connection(abort_source* as) {
 future<client::connection_ptr> client::make_connection(abort_source* as) {
     _total_new_connections++;
     return _new_connections->make(as).then([cr = internal::client_ref(this)] (connected_socket cs) mutable {
-        http_log.trace("created new http connection {}", cs.local_address());
+        LOGMACRO(http_log, log_level::trace, "created new http connection {}", cs.local_address());
         auto con = seastar::make_shared<connection>(std::move(cs), std::move(cr));
         return make_ready_future<connection_ptr>(std::move(con));
     });
@@ -255,13 +255,13 @@ future<client::connection_ptr> client::make_connection(abort_source* as) {
 
 future<> client::put_connection(connection_ptr con) {
     if (con->_persistent && (_nr_connections <= _max_connections)) {
-        http_log.trace("push http connection {} to pool", con->_fd.local_address());
+        LOGMACRO(http_log, log_level::trace, "push http connection {} to pool", con->_fd.local_address());
         _pool.push_back(*con);
         _wait_con.signal();
         return make_ready_future<>();
     }
 
-    http_log.trace("dropping connection {}", con->_fd.local_address());
+    LOGMACRO(http_log, log_level::trace, "dropping connection {}", con->_fd.local_address());
     return con->close().finally([con] {});
 }
 
@@ -404,7 +404,7 @@ future<> client::close() {
 
     connection_ptr con = _pool.front().shared_from_this();
     _pool.pop_front();
-    http_log.trace("closing connection {}", con->_fd.local_address());
+    LOGMACRO(http_log, log_level::trace, "closing connection {}", con->_fd.local_address());
     return con->close().then([this, con] {
         return close();
     });

@@ -583,11 +583,11 @@ future<>
 dns_resolver::impl::close() {
     _closed = true;
     ares_cancel(_channel);
-    dns_log.trace("Shutting down {} sockets", _sockets.size());
+    LOGMACRO(dns_log, log_level::trace, "Shutting down {} sockets", _sockets.size());
     for (auto & p : _sockets) {
         do_close(p.first);
     }
-    dns_log.trace("Closing gate");
+    LOGMACRO(dns_log, log_level::trace, "Closing gate");
     return _gate.close();
 }
 
@@ -602,7 +602,7 @@ dns_resolver::impl::end_call() {
 
 void
 dns_resolver::impl::poll_sockets() {
-    dns_log.trace("Poll sockets");
+    LOGMACRO(dns_log, log_level::trace, "Poll sockets");
 
     bool processed = false;
 
@@ -613,7 +613,7 @@ dns_resolver::impl::poll_sockets() {
         FD_ZERO(&writers);
 
         int nr_fds = ares_fds(_channel, &readers, &writers);
-        dns_log.trace("ares_fds: {}", nr_fds);
+        LOGMACRO(dns_log, log_level::trace, "ares_fds: {}", nr_fds);
         if (nr_fds == 0) {
             break;
         }
@@ -634,7 +634,7 @@ dns_resolver::impl::poll_sockets() {
             bool read_avail = e.avail & POLLIN;
             bool write_avail = e.avail & POLLOUT;
 
-            dns_log.trace("fd {} {}{}/{}{}", fd,
+            LOGMACRO(dns_log, log_level::trace, "fd {} {}{}/{}{}", fd,
                           read_monitor ? "r" : "",
                           write_monitor ? "w" : "",
                           read_avail ? "r" : "",
@@ -784,10 +784,10 @@ dns_resolver::impl::use(ares_socket_t fd) {
 void
 dns_resolver::impl::release(ares_socket_t fd) {
     auto& e = _sockets.at(fd);
-    dns_log.trace("Release socket {} -> {}", fd, e.pending -  1);
+    LOGMACRO(dns_log, log_level::trace, "Release socket {} -> {}", fd, e.pending -  1);
     if (--e.pending < 0) {
         _sockets.erase(fd);
-        dns_log.trace("Released socket {}", fd);
+        LOGMACRO(dns_log, log_level::trace, "Released socket {}", fd);
     }
     _gate.leave();
 }
@@ -801,11 +801,11 @@ dns_resolver::impl::do_socket(int af, int type, int protocol) {
     switch (type) {
     case SOCK_STREAM:
         _sockets.emplace(fd, connected_socket());
-        dns_log.trace("Created tcp socket {}", fd);
+        LOGMACRO(dns_log, log_level::trace, "Created tcp socket {}", fd);
         break;
     case SOCK_DGRAM:
         _sockets.emplace(fd, _stack.make_unbound_datagram_channel(AF_INET));
-        dns_log.trace("Created udp socket {}", fd);
+        LOGMACRO(dns_log, log_level::trace, "Created udp socket {}", fd);
         break;
     default: return -1;
     }
@@ -814,7 +814,7 @@ dns_resolver::impl::do_socket(int af, int type, int protocol) {
 
 int
 dns_resolver::impl::do_close(ares_socket_t fd) {
-    dns_log.trace("Close socket {}", fd);
+    LOGMACRO(dns_log, log_level::trace, "Close socket {}", fd);
     auto& e = _sockets.at(fd);
 
     // Mark as closed.
@@ -827,17 +827,17 @@ dns_resolver::impl::do_close(ares_socket_t fd) {
     switch (e.typ) {
     case type::tcp:
     {
-        dns_log.trace("Close tcp socket {}, {} pending", fd, e.pending);
+        LOGMACRO(dns_log, log_level::trace, "Close tcp socket {}, {} pending", fd, e.pending);
         future<> f = make_ready_future();
         if (e.tcp.in) {
             e.tcp.socket.shutdown_input();
-            dns_log.trace("Closed tcp socket {} input", fd);
+            LOGMACRO(dns_log, log_level::trace, "Closed tcp socket {} input", fd);
         }
         if (e.tcp.out) {
             f = f.then([&e] {
                 return e.tcp.out->close();
             }).then([fd] {
-                dns_log.trace("Closed tcp socket {} output", fd);
+                LOGMACRO(dns_log, log_level::trace, "Closed tcp socket {} output", fd);
             });
         }
         f = f.finally([me = shared_from_this(), fd] {
@@ -876,7 +876,7 @@ dns_resolver::impl::do_connect(ares_socket_t fd, const sockaddr * addr, socklen_
         auto& e = get_socket_entry(fd);
         auto sa = sock_addr(addr, len);
 
-        dns_log.trace("Connect {}({})->{}", fd, int(e.typ), sa);
+        LOGMACRO(dns_log, log_level::trace, "Connect {}({})->{}", fd, int(e.typ), sa);
 
         SEASTAR_ASSERT(e.avail == 0);
 
@@ -886,14 +886,14 @@ dns_resolver::impl::do_connect(ares_socket_t fd, const sockaddr * addr, socklen_
         case type::tcp: {
             auto f = _stack.connect(sa);
             if (!f.available()) {
-                dns_log.trace("Connection pending: {}", fd);
+                LOGMACRO(dns_log, log_level::trace, "Connection pending: {}", fd);
                 e.avail = 0;
                 use(fd);
                 // FIXME: future is discarded
                 (void)f.then_wrapped([me = shared_from_this(), &e, fd](future<connected_socket> f) {
                     try {
                         e.tcp.socket = f.get();
-                        dns_log.trace("Connection complete: {}", fd);
+                        LOGMACRO(dns_log, log_level::trace, "Connection complete: {}", fd);
                     } catch (...) {
                         dns_log.debug("Connect {} failed: {}", fd, std::current_exception());
                     }
@@ -928,10 +928,10 @@ dns_resolver::impl::do_recvfrom(ares_socket_t fd, void * dst, size_t len, int fl
     }
     try {
         auto& e = get_socket_entry(fd);
-        dns_log.trace("Read {}({})", fd, int(e.typ));
+        LOGMACRO(dns_log, log_level::trace, "Read {}({})", fd, int(e.typ));
         // check if we're already reading.
         if (!(e.avail & POLLIN)) {
-            dns_log.trace("Read already pending {}", fd);
+            LOGMACRO(dns_log, log_level::trace, "Read already pending {}", fd);
             errno = EWOULDBLOCK;
             return -1;
         }
@@ -940,7 +940,7 @@ dns_resolver::impl::do_recvfrom(ares_socket_t fd, void * dst, size_t len, int fl
             case type::tcp: {
                 auto & tcp = e.tcp;
                 if (!tcp.indata.empty()) {
-                    dns_log.trace("Read {}. {} bytes available", fd, tcp.indata.size());
+                    LOGMACRO(dns_log, log_level::trace, "Read {}. {} bytes available", fd, tcp.indata.size());
                     len = std::min(len, tcp.indata.size());
                     std::copy(tcp.indata.begin(), tcp.indata.begin() + len, reinterpret_cast<char *>(dst));
                     tcp.indata.trim_front(len);
@@ -955,14 +955,14 @@ dns_resolver::impl::do_recvfrom(ares_socket_t fd, void * dst, size_t len, int fl
                 }
                 auto f = tcp.in->read_up_to(len);
                 if (!f.available()) {
-                    dns_log.trace("Read {}: data unavailable", fd);
+                    LOGMACRO(dns_log, log_level::trace, "Read {}: data unavailable", fd);
                     e.avail &= ~POLLIN;
                     use(fd);
                     // FIXME: future is discarded
                     (void)f.then_wrapped([me = shared_from_this(), &e, fd](future<temporary_buffer<char>> f) {
                         try {
                             auto buf = f.get();
-                            dns_log.trace("Read {} -> {} bytes", fd, buf.size());
+                            LOGMACRO(dns_log, log_level::trace, "Read {} -> {} bytes", fd, buf.size());
                             e.tcp.indata = std::move(buf);
                         } catch (...) {
                             dns_log.debug("Read {} failed: {}", fd, std::current_exception());
@@ -991,7 +991,7 @@ dns_resolver::impl::do_recvfrom(ares_socket_t fd, void * dst, size_t len, int fl
                 if (udp.in) {
                     auto & p = udp.in->get_data();
 
-                    dns_log.trace("Read {}. {} bytes available from {}", fd, p.len(), udp.in->get_src());
+                    LOGMACRO(dns_log, log_level::trace, "Read {}. {} bytes available from {}", fd, p.len(), udp.in->get_src());
 
                     if (from != nullptr) {
                         *from = socket_address(udp.in->get_src()).as_posix_sockaddr();
@@ -1020,12 +1020,12 @@ dns_resolver::impl::do_recvfrom(ares_socket_t fd, void * dst, size_t len, int fl
                 if (!f.available()) {
                     e.avail &= ~POLLIN;
                     use(fd);
-                    dns_log.trace("Read {}: data unavailable", fd);
+                    LOGMACRO(dns_log, log_level::trace, "Read {}: data unavailable", fd);
                     // FIXME: future is discarded
                     (void)f.then_wrapped([me = shared_from_this(), &e, fd](future<datagram> f) {
                         try {
                             auto d = f.get();
-                            dns_log.trace("Read {} -> {} bytes", fd, d.get_data().len());
+                            LOGMACRO(dns_log, log_level::trace, "Read {} -> {} bytes", fd, d.get_data().len());
                             e.udp.in = std::move(d);
                             e.avail |= POLLIN;
                         } catch (...) {
@@ -1064,7 +1064,7 @@ dns_resolver::impl::do_sendv(ares_socket_t fd, const iovec * vec, int len) {
     }
     try {
         auto& e = _sockets.at(fd);
-        dns_log.trace("Send {}({})", fd, int(e.typ));
+        LOGMACRO(dns_log, log_level::trace, "Send {}({})", fd, int(e.typ));
 
         // Assume we will be able to send data eventually very soon
         // and just assume that unless we get immediate
@@ -1087,7 +1087,7 @@ dns_resolver::impl::do_sendv(ares_socket_t fd, const iovec * vec, int len) {
         for (;;) {
             // check if we're already writing.
             if (e.typ == type::tcp && !(e.avail & POLLOUT)) {
-                dns_log.trace("Send already pending {}", fd);
+                LOGMACRO(dns_log, log_level::trace, "Send already pending {}", fd);
                 errno = EWOULDBLOCK;
                 return -1;
             }
@@ -1150,13 +1150,13 @@ dns_resolver::impl::do_sendv(ares_socket_t fd, const iovec * vec, int len) {
             }
 
             if (!f.available()) {
-                dns_log.trace("Send {} unavailable.", fd);
+                LOGMACRO(dns_log, log_level::trace, "Send {} unavailable.", fd);
                 e.avail &= ~POLLOUT;
                 // FIXME: future is discarded
                 (void)f.then_wrapped([me = shared_from_this(), &e, bytes, fd](future<> f) {
                     try {
                         f.get();
-                        dns_log.trace("Send {}. {} bytes sent.", fd, bytes);
+                        LOGMACRO(dns_log, log_level::trace, "Send {}. {} bytes sent.", fd, bytes);
                     } catch (...) {
                         dns_log.debug("Send {} failed: {}", fd, std::current_exception());
                     }

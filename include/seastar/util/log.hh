@@ -586,3 +586,5 @@ template <> struct fmt::formatter<std::system_error> : fmt::ostream_formatter {}
 #endif
 
 /// @}
+///
+#define LOGMACRO(logger, level, ...) logger.log(level, __VA_ARGS__)
