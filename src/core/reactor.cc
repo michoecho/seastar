@@ -4147,11 +4147,11 @@ public:
     }
 
     void parse_config(const smp_options& smp_opts, const reactor_options& reactor_opts) {
-        LOGMACRO(seastar_logger, log_level::debug, "smp::count: {}", smp::count);
+        LOGMACRO_OLD(seastar_logger, log_level::debug, "smp::count: {}", smp::count);
         _latency_goal = std::chrono::duration_cast<std::chrono::duration<double>>(latency_goal_opt(reactor_opts) * 1ms);
-        LOGMACRO(seastar_logger, log_level::debug, "latency_goal: {}", latency_goal().count());
+        LOGMACRO_OLD(seastar_logger, log_level::debug, "latency_goal: {}", latency_goal().count());
         _flow_ratio_backpressure_threshold = reactor_opts.io_flow_ratio_threshold.get_value();
-        LOGMACRO(seastar_logger, log_level::debug, "flow-ratio threshold: {}", _flow_ratio_backpressure_threshold);
+        LOGMACRO_OLD(seastar_logger, log_level::debug, "flow-ratio threshold: {}", _flow_ratio_backpressure_threshold);
         _stall_threshold = reactor_opts.io_completion_notify_ms.defaulted() ? std::chrono::milliseconds::max() : reactor_opts.io_completion_notify_ms.get_value() * 1ms;
 
         if (smp_opts.num_io_groups) {
@@ -4306,11 +4306,11 @@ unsigned smp::adjust_max_networking_aio_io_control_blocks(unsigned network_iocbs
     auto requested_aio_other = reserve_iocbs + (storage_iocbs + preempt_iocbs) * smp::count;
     auto requested_aio = requested_aio_network + requested_aio_other;
 
-    LOGMACRO(seastar_logger, log_level::debug, "Intended AIO control block usage:");
-    LOGMACRO(seastar_logger, log_level::debug, "");
+    LOGMACRO_OLD(seastar_logger, log_level::debug, "Intended AIO control block usage:");
+    LOGMACRO_OLD(seastar_logger, log_level::debug, "");
     log_aiocbs(log_level::debug, storage_iocbs, preempt_iocbs, network_iocbs, reserve_iocbs);
-    LOGMACRO(seastar_logger, log_level::debug, "");
-    LOGMACRO(seastar_logger, log_level::debug, "Available AIO control blocks = aio-max-nr - aio-nr = {} - {} = {}", aio_max_nr, aio_nr, available_aio);
+    LOGMACRO_OLD(seastar_logger, log_level::debug, "");
+    LOGMACRO_OLD(seastar_logger, log_level::debug, "Available AIO control blocks = aio-max-nr - aio-nr = {} - {} = {}", aio_max_nr, aio_nr, available_aio);
 
     if (available_aio < requested_aio) {
         if (available_aio >= requested_aio_other + smp::count) { // at least one queue for each shard
@@ -4640,7 +4640,7 @@ void smp::configure(const smp_options& smp_opts, const reactor_options& reactor_
     _all_event_loops_done.emplace(smp::count);
 
     auto backend_selector = reactor_opts.reactor_backend.get_selected_candidate();
-    LOGMACRO(seastar_logger, log_level::info, "Reactor backend: {}", backend_selector);
+    LOGMACRO_OLD(seastar_logger, log_level::info, "Reactor backend: {}", backend_selector);
 
     unsigned i;
     auto smp_tmain = smp::_tmain;

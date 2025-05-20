@@ -89,8 +89,13 @@ struct constexpr_string {
     }
 };
 
-template <typename T> constexpr std::string type_to_sig() { return "unknown"; }
-
+template <typename T> constexpr std::string type_to_sig() {
+    if constexpr (sizeof(T) <= 8) {
+        return "unknown64";
+    } else {
+        return "unknown128";
+    }
+}
 template <> constexpr std::string type_to_sig<uint64_t>() { return "u64"; }
 template <> constexpr std::string type_to_sig<int64_t>() { return "i64"; }
 template <> constexpr std::string type_to_sig<uint32_t>() { return "u32"; }
@@ -130,8 +135,19 @@ constexpr auto arrayify_constexpr_string(std::string result) {
 #define COMPUTE_SIGNATURE(...) arrayify_constexpr_string<compute_signature(__VA_ARGS__).size()>(compute_signature(__VA_ARGS__))
 
 template<typename T>
+constexpr size_t compute_unknown_size_impl() {
+    if constexpr (sizeof(T) <= 8) {
+        return 8;
+    } else {
+        return 16;
+    }
+}
+
+template<typename T>
 requires (!std::integral<T>)
-constexpr size_t compute_size_impl(const T& x) { return 0; }
+constexpr size_t compute_size_impl(const T& x) {
+    return compute_unknown_size_impl<T>();
+}
 template<std::integral T>
 constexpr size_t compute_size_impl(const T& x) { return sizeof(x); }
 constexpr size_t compute_size_impl(void const* const& x) { return sizeof(x); }
@@ -150,7 +166,11 @@ requires std::is_trivially_copyable_v<From> {
 
 template<typename T>
 requires (!std::integral<T>)
-inline void serialize_tracepoint_impl(std::byte*& out, const T& x) {}
+inline void serialize_tracepoint_impl(std::byte*& out, const T& x) {
+    constexpr size_t sz = compute_unknown_size_impl<T>();
+    memcpy(out, reinterpret_cast<const void*>(&x), std::min<size_t>(sizeof(x), sz));
+    out += sz;
+}
 template<std::integral T>
 inline void serialize_tracepoint_impl(std::byte*& out, const T& x) { write_int(out, x); }
 inline void serialize_tracepoint_impl(std::byte*& out, void const* const& x) { write_int(out, uint64_t(x)); }
@@ -168,6 +188,7 @@ typedef struct {
     const char* name;
     const char* file;
     int line;
+    int level;
     const char* function;
     const char* signature;
 } tracepoint_entry;
@@ -197,22 +218,24 @@ extern __thread tracer* local_tracer;
 #define SIG_N(N, ...) COMBINE_TOKENS(SIG_, N)(__VA_ARGS__)
 #define SIG(...) SIG_N(NARGS(0, ##__VA_ARGS__), ##__VA_ARGS__)
 
-#define TRACEPOINT(level, name, ...) { \
+#define TRACEPOINT(eventlevel, name, loglevel, ...) { \
     using namespace seastar; \
     static constexpr auto sig __attribute__((section("tracepoint_signatures"), used)) = \
         COMPUTE_SIGNATURE(SIG(__VA_ARGS__)); \
     static constexpr char namearr[] __attribute__((section("tracepoint_names"), used)) = name; \
     static constexpr char filearr[] __attribute__((section("tracepoint_files"), used)) = __FILE__; \
     static constexpr tracepoint_entry tp __attribute__((section("tracepoints"), used)) = { \
-        namearr, filearr, __LINE__, __PRETTY_FUNCTION__, sig.data() \
+        namearr, filearr, __LINE__, int(loglevel), __PRETTY_FUNCTION__, sig.data() \
     }; \
     size_t sz = compute_size(__VA_ARGS__); \
-    auto out = local_tracer->write(level, sz + 16); \
+    auto out = local_tracer->write(eventlevel, sz + 16); \
     seastar::write_le<uintptr_t>(reinterpret_cast<char*>(out), reinterpret_cast<uintptr_t>(&tp)); \
     out += sizeof(uintptr_t); \
     seastar::write_le<uint64_t>(reinterpret_cast<char*>(out), rdtsc()); \
     out += sizeof(uint64_t); \
     serialize_tracepoint(out __VA_OPT__(,) __VA_ARGS__); \
 }
+
+int tracepoint_decoder_main(int argc, char** argv);
 
 } // namespace seastar

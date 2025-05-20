@@ -588,4 +588,5 @@ template <> struct fmt::formatter<std::system_error> : fmt::ostream_formatter {}
 
 /// @}
 ///
-#define LOGMACRO(logger, level, fmtstring, ...) do { TRACEPOINT(tracer::event_level::DEBUG, fmtstring __VA_OPT__(,) __VA_ARGS__); logger.log(level, fmtstring __VA_OPT__(,) __VA_ARGS__); } while (0)
+#define LOGMACRO(logger, level, fmtstring, ...) do { TRACEPOINT(tracer::event_level::DEBUG, fmtstring, level __VA_OPT__(,) __VA_ARGS__); logger.log(level, fmtstring __VA_OPT__(,) __VA_ARGS__); } while (0)
+#define LOGMACRO_OLD(logger, level, fmtstring, ...) do { logger.log(level, fmtstring __VA_OPT__(,) __VA_ARGS__); } while (0)

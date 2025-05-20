@@ -155,7 +155,7 @@ static optional<fs::path> cgroup2_path_my_pid() {
     if (cline.at(0) != '0') {
         // This is either a v1 system, or system configured with a hybrid of v1 & v2.
         // We do not support such combinations of v1 and v2 at this point.
-        LOGMACRO(seastar_logger, log_level::debug, "Not a cgroups-v2-only system");
+        LOGMACRO_OLD(seastar_logger, log_level::debug, "Not a cgroups-v2-only system");
         return std::nullopt;
     }
 
@@ -434,7 +434,7 @@ allocate_io_queues(hwloc_topology_t topology, std::vector<cpu> cpus, std::unorde
     if (num_io_groups == 0) {
         num_io_groups = numa_nodes.size();
         SEASTAR_ASSERT(num_io_groups != 0);
-        LOGMACRO(seastar_logger, log_level::debug, "Auto-configure {} IO groups", num_io_groups);
+        LOGMACRO_OLD(seastar_logger, log_level::debug, "Auto-configure {} IO groups", num_io_groups);
     } else if (num_io_groups > cpus.size()) {
         // User may be playing with --smp option, but num_io_groups was independently
         // determined by iotune, so adjust for any conflicts.
@@ -632,7 +632,7 @@ resources allocate(configuration& c) {
                 seastar_logger.warn("hwloc failed to detect NUMA node memory size, using memory size fetched from sysfs");
             }
             cpu_to_node[cpu_id] = node;
-            LOGMACRO(seastar_logger, log_level::debug, "Assign CPU{} to NUMA{}", cpu_id, node->os_index);
+            LOGMACRO_OLD(seastar_logger, log_level::debug, "Assign CPU{} to NUMA{}", cpu_id, node->os_index);
         }
     }
 
@@ -666,7 +666,7 @@ resources allocate(configuration& c) {
         for (auto&& gb : group_by) {
             grouped = break_cpus_into_groups(topology, orphan_pus, gb);
             if (grouped.size() >= nodes.size()) {
-                LOGMACRO(seastar_logger, log_level::debug, "Grouped orphan CPUs by {}", hwloc_obj_type_string(gb));
+                LOGMACRO_OLD(seastar_logger, log_level::debug, "Grouped orphan CPUs by {}", hwloc_obj_type_string(gb));
                 break;
             }
             // Try to scatter orphans into as much NUMA nodes as possible
@@ -678,7 +678,7 @@ resources allocate(configuration& c) {
         for (auto&& grp : grouped) {
             for (auto&& cpu_id : grp.second) {
                 cpu_to_node[cpu_id] = nodes[nid];
-                LOGMACRO(seastar_logger, log_level::debug, "Assign orphan CPU{} to NUMA{}", cpu_id, nodes[nid]->os_index);
+                LOGMACRO_OLD(seastar_logger, log_level::debug, "Assign orphan CPU{} to NUMA{}", cpu_id, nodes[nid]->os_index);
             }
             nid = (nid + 1) % nodes.size();
         }
