@@ -45,7 +45,7 @@ SEASTAR_THREAD_TEST_CASE(test_queue_pop_eventually) {
     auto watchdog_duration = 10s;
     timer stop_timer;
     stop_timer.set_callback([&] {
-        testlog.debug("stop_timer: pushed={} pusher_done={} popped={} popper_done={} full={} empty={} stop={}",
+        LOGMACRO(testlog, log_level::debug, "stop_timer: pushed={} pusher_done={} popped={} popper_done={} full={} empty={} stop={}",
                 pushed, pusher_done, popped, popper_done,
                 q.full(), q.empty(), stop);
         if (!stop++) {
@@ -69,7 +69,7 @@ SEASTAR_THREAD_TEST_CASE(test_queue_pop_eventually) {
         return q.push_eventually(std::move(data)).then([&] {
             pushed++;
             if (stop && !q.empty()) {
-                testlog.debug("pusher done");
+                LOGMACRO(testlog, log_level::debug, "pusher done");
                 pusher_done = true;
                 return stop_iteration::yes;
             }
@@ -80,11 +80,11 @@ SEASTAR_THREAD_TEST_CASE(test_queue_pop_eventually) {
         LOGMACRO(testlog, log_level::trace, "popper: full={} empty={} stop={}", q.full(), q.empty(), stop);
         if (q.empty()) {
             if (pusher_done) {
-                testlog.debug("popper done");
+                LOGMACRO(testlog, log_level::debug, "popper done");
                 popper_done = true;
                 return make_ready_future<stop_iteration>(true);
             } else if (stop) {
-                testlog.debug("popper: full={} empty={} pusher_done={} stop={}", q.full(), q.empty(), pusher_done, stop);
+                LOGMACRO(testlog, log_level::debug, "popper: full={} empty={} pusher_done={} stop={}", q.full(), q.empty(), pusher_done, stop);
             }
         }
         return q.pop_eventually().then([&] (int&&) {

@@ -388,7 +388,7 @@ dns_resolver::impl::get_host_by_name(sstring name, opt_family family)  {
         sstring name;
     };
 
-    dns_log.debug("Query name {} ({})", name, family);
+    LOGMACRO(dns_log, log_level::debug, "Query name {} ({})", name, family);
 
     if (!family) {
         auto res = inet_address::parse_numerical(name);
@@ -421,7 +421,7 @@ dns_resolver::impl::get_host_by_name(sstring name, opt_family family)  {
 
         switch (status) {
         default:
-            dns_log.debug("Query failed: {}", status);
+            LOGMACRO(dns_log, log_level::debug, "Query failed: {}", status);
             p->set_exception(std::system_error(status, dns::error_category(), p->name));
             break;
         case ARES_SUCCESS:
@@ -449,7 +449,7 @@ dns_resolver::impl::get_host_by_addr(inet_address addr) {
         inet_address addr;
     };
 
-    dns_log.debug("Query addr {}", addr);
+    LOGMACRO(dns_log, log_level::debug, "Query addr {}", addr);
 
     auto p = new promise_wrap(std::move(addr));
     auto f = p->get_future();
@@ -463,7 +463,7 @@ dns_resolver::impl::get_host_by_addr(inet_address addr) {
 
         switch (status) {
         default:
-            dns_log.debug("Query failed: {}", status);
+            LOGMACRO(dns_log, log_level::debug, "Query failed: {}", status);
             p->set_exception(std::system_error(status, dns::error_category(), boost::lexical_cast<std::string>(p->addr)));
             break;
         case ARES_SUCCESS:
@@ -493,7 +493,7 @@ dns_resolver::impl::get_srv_records(srv_proto proto,
                                 proto == srv_proto::tcp ? "tcp" : "udp",
                                 domain);
 
-    dns_log.debug("Query srv {}", query);
+    LOGMACRO(dns_log, log_level::debug, "Query srv {}", query);
 
     dns_call call(*this);
 
@@ -504,7 +504,7 @@ dns_resolver::impl::get_srv_records(srv_proto proto,
         auto p = std::unique_ptr<promise<srv_records>>(
             reinterpret_cast<promise<srv_records> *>(arg));
         if (status != ARES_SUCCESS) {
-            dns_log.debug("Query failed: {}", fmt::underlying(status));
+            LOGMACRO(dns_log, log_level::debug, "Query failed: {}", fmt::underlying(status));
             p->set_exception(std::system_error(status, dns::error_category()));
             return;
         }
@@ -531,7 +531,7 @@ dns_resolver::impl::get_srv_records(srv_proto proto,
             });
         }
         if (status != ARES_SUCCESS) {
-            dns_log.debug("Parse failed: {}", fmt::underlying(status));
+            LOGMACRO(dns_log, log_level::debug, "Parse failed: {}", fmt::underlying(status));
             p->set_exception(std::system_error(status, dns::error_category()));
             return;
         }
@@ -544,14 +544,14 @@ dns_resolver::impl::get_srv_records(srv_proto proto,
         auto p = std::unique_ptr<promise<srv_records>>(
             reinterpret_cast<promise<srv_records> *>(arg));
         if (status != ARES_SUCCESS) {
-            dns_log.debug("Query failed: {}", status);
+            LOGMACRO(dns_log, log_level::debug, "Query failed: {}", status);
             p->set_exception(std::system_error(status, dns::error_category()));
             return;
         }
         ares_srv_reply* start = nullptr;
         status = ares_parse_srv_reply(buf, len, &start);
         if (status != ARES_SUCCESS) {
-            dns_log.debug("Parse failed: {}", status);
+            LOGMACRO(dns_log, log_level::debug, "Parse failed: {}", status);
             p->set_exception(std::system_error(status, dns::error_category()));
             return;
         }
@@ -739,7 +739,7 @@ dns_resolver::impl::make_hostent(const ares_addrinfo* ai) {
         }
     }
 
-    dns_log.debug("Query success: {}/{}", e.names.front(), e.addr_list.front());
+    LOGMACRO(dns_log, log_level::debug, "Query success: {}/{}", e.names.front(), e.addr_list.front());
 
     return e;
 }
@@ -769,7 +769,7 @@ dns_resolver::impl::make_hostent(const ::hostent& host) {
         ++p;
     }
 
-    dns_log.debug("Query success: {}/{}", e.names.front(), e.addr_list.front());
+    LOGMACRO(dns_log, log_level::debug, "Query success: {}/{}", e.names.front(), e.addr_list.front());
 
     return e;
 }
@@ -895,7 +895,7 @@ dns_resolver::impl::do_connect(ares_socket_t fd, const sockaddr * addr, socklen_
                         e.tcp.socket = f.get();
                         LOGMACRO(dns_log, log_level::trace, "Connection complete: {}", fd);
                     } catch (...) {
-                        dns_log.debug("Connect {} failed: {}", fd, std::current_exception());
+                        LOGMACRO(dns_log, log_level::debug, "Connect {} failed: {}", fd, std::current_exception());
                     }
                     e.avail = POLLOUT|POLLIN;
                     me->poll_sockets();
@@ -965,7 +965,7 @@ dns_resolver::impl::do_recvfrom(ares_socket_t fd, void * dst, size_t len, int fl
                             LOGMACRO(dns_log, log_level::trace, "Read {} -> {} bytes", fd, buf.size());
                             e.tcp.indata = std::move(buf);
                         } catch (...) {
-                            dns_log.debug("Read {} failed: {}", fd, std::current_exception());
+                            LOGMACRO(dns_log, log_level::debug, "Read {} failed: {}", fd, std::current_exception());
                         }
                         e.avail |= POLLIN; // always reset state
                         me->poll_sockets();
@@ -1029,7 +1029,7 @@ dns_resolver::impl::do_recvfrom(ares_socket_t fd, void * dst, size_t len, int fl
                             e.udp.in = std::move(d);
                             e.avail |= POLLIN;
                         } catch (...) {
-                            dns_log.debug("Read {} failed: {}", fd, std::current_exception());
+                            LOGMACRO(dns_log, log_level::debug, "Read {} failed: {}", fd, std::current_exception());
                         }
                         me->poll_sockets();
                         me->release(fd);
@@ -1158,7 +1158,7 @@ dns_resolver::impl::do_sendv(ares_socket_t fd, const iovec * vec, int len) {
                         f.get();
                         LOGMACRO(dns_log, log_level::trace, "Send {}. {} bytes sent.", fd, bytes);
                     } catch (...) {
-                        dns_log.debug("Send {} failed: {}", fd, std::current_exception());
+                        LOGMACRO(dns_log, log_level::debug, "Send {} failed: {}", fd, std::current_exception());
                     }
                     e.avail |= POLLOUT;
                     me->poll_sockets();

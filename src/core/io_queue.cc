@@ -133,7 +133,7 @@ public:
 
     void update_bandwidth(uint64_t bandwidth) {
         _group.update_bandwidth(bandwidth);
-        io_log.debug("Updated {} class bandwidth to {}MB/s", _pc.id(), bandwidth >> 20);
+        LOGMACRO(io_log, log_level::debug, "Updated {} class bandwidth to {}MB/s", _pc.id(), bandwidth >> 20);
     }
 
     priority_class_data(internal::priority_class pc, uint32_t shares, io_queue& q, io_group::priority_class_data& pg)

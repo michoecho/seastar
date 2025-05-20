@@ -110,14 +110,14 @@ future<> connection::read_one() {
             case opcodes::BINARY:
                 return _input_buffer.push_eventually(_websocket_parser.result());
             case opcodes::CLOSE:
-                websocket_logger.debug("Received close frame.");
+                LOGMACRO(websocket_logger, log_level::debug, "Received close frame.");
                 // datatracker.ietf.org/doc/html/rfc6455#section-5.5.1
                 return close(true);
             case opcodes::PING:
-                websocket_logger.debug("Received ping frame.");
+                LOGMACRO(websocket_logger, log_level::debug, "Received ping frame.");
                 return handle_ping();
             case opcodes::PONG:
-                websocket_logger.debug("Received pong frame.");
+                LOGMACRO(websocket_logger, log_level::debug, "Received pong frame.");
                 return handle_pong();
             default:
                 // Invalid - do nothing.
@@ -126,7 +126,7 @@ future<> connection::read_one() {
         } else if (_websocket_parser.eof()) {
             return close(false);
         }
-        websocket_logger.debug("Reading from socket has failed.");
+        LOGMACRO(websocket_logger, log_level::debug, "Reading from socket has failed.");
         return close(true);
     });
 }

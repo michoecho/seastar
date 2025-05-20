@@ -752,7 +752,7 @@ void write_value_as_string(std::stringstream& s, const mi::metric_value& value) 
     try {
         s << value;
     } catch (const std::range_error& e) {
-        seastar_logger.debug("prometheus: write_value_as_string: {}: {}", s.str(), e.what());
+        LOGMACRO(seastar_logger, log_level::debug, "prometheus: write_value_as_string: {}: {}", s.str(), e.what());
         s << "NaN";
     } catch (...) {
         auto ex = std::current_exception();

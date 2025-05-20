@@ -305,17 +305,17 @@ future<> connection::process() {
         try {
             std::get<0>(joined).get();
         } catch (...) {
-            hlogger.debug("Read exception encountered: {}", std::current_exception());
+            LOGMACRO(hlogger, log_level::debug, "Read exception encountered: {}", std::current_exception());
         }
         try {
             std::get<1>(joined).get();
         } catch (...) {
-            hlogger.debug("Response exception encountered: {}", std::current_exception());
+            LOGMACRO(hlogger, log_level::debug, "Response exception encountered: {}", std::current_exception());
         }
         return make_ready_future<>();
     }).finally([this]{
         return _read_buf.close().handle_exception([](std::exception_ptr e) {
-            hlogger.debug("Close exception encountered: {}", e);
+            LOGMACRO(hlogger, log_level::debug, "Close exception encountered: {}", e);
         });
     });
 }

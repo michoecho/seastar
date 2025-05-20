@@ -455,10 +455,10 @@ SEASTAR_TEST_CASE(test_request_iovec_split) {
     unsigned no_tails = 0;
 
     do {
-        seastar_logger.debug("===== iter {} =====", iter++);
+        LOGMACRO(seastar_logger, log_level::debug, "===== iter {} =====", iter++);
         std::vector<::iovec> vecs;
         unsigned nr_vecs = dice(reng) % 13 + 1;
-        seastar_logger.debug("Generate {} iovecs", nr_vecs);
+        LOGMACRO(seastar_logger, log_level::debug, "Generate {} iovecs", nr_vecs);
         size_t total = 0;
         for (unsigned i = 0; i < nr_vecs; i++) {
             ::iovec iov;
@@ -481,7 +481,7 @@ SEASTAR_TEST_CASE(test_request_iovec_split) {
 
         size_t max_len = dice(reng) * 3;
         unsigned nr_parts = (total + max_len - 1) / max_len;
-        seastar_logger.debug("Split {} into {}-bytes ({} parts)", total, max_len, nr_parts);
+        LOGMACRO(seastar_logger, log_level::debug, "Split {} into {}-bytes ({} parts)", total, max_len, nr_parts);
         auto parts = req.split(max_len);
         show_request_parts(parts, large_buffer);
         BOOST_REQUIRE_EQUAL(parts.size(), nr_parts);

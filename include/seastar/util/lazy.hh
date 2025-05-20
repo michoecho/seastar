@@ -118,7 +118,7 @@ namespace std {
 ///
 /// For example:
 ///
-/// `logger.debug("heavy eval result:{}", seastar::value_of([&] { return <heavy evaluation>; }));`
+/// `LOGMACRO(logger, log_level::debug, "heavy eval result:{}", seastar::value_of([&] { return <heavy evaluation>; }));`
 ///
 /// (If a logging level is lower than "debug" the evaluation will not take place.)
 ///

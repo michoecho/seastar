@@ -384,7 +384,7 @@ future<> client::do_make_request(connection& con, request& req, reply_handler& h
 
             return do_with(con.in(rep), [reply = std::move(reply)] (auto& in) mutable {
                 return util::read_entire_stream_contiguous(in).then([reply = std::move(reply)] (auto message) {
-                    http_log.debug("request finished with {}: {}", reply->_status, message);
+                    LOGMACRO(http_log, log_level::debug, "request finished with {}: {}", reply->_status, message);
                     return make_exception_future<>(httpd::unexpected_status_error(reply->_status));
                 });
             });

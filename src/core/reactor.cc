@@ -3081,7 +3081,7 @@ void reactor::run_in_background(future<> f) {
 }
 
 future<> reactor::drain() {
-    seastar_logger.debug("reactor::drain");
+    LOGMACRO(seastar_logger, log_level::debug, "reactor::drain");
     return smp::invoke_on_all([] {
         if (engine()._background_gate.is_closed()) {
             return make_ready_future<>();
@@ -4147,11 +4147,11 @@ public:
     }
 
     void parse_config(const smp_options& smp_opts, const reactor_options& reactor_opts) {
-        seastar_logger.debug("smp::count: {}", smp::count);
+        LOGMACRO(seastar_logger, log_level::debug, "smp::count: {}", smp::count);
         _latency_goal = std::chrono::duration_cast<std::chrono::duration<double>>(latency_goal_opt(reactor_opts) * 1ms);
-        seastar_logger.debug("latency_goal: {}", latency_goal().count());
+        LOGMACRO(seastar_logger, log_level::debug, "latency_goal: {}", latency_goal().count());
         _flow_ratio_backpressure_threshold = reactor_opts.io_flow_ratio_threshold.get_value();
-        seastar_logger.debug("flow-ratio threshold: {}", _flow_ratio_backpressure_threshold);
+        LOGMACRO(seastar_logger, log_level::debug, "flow-ratio threshold: {}", _flow_ratio_backpressure_threshold);
         _stall_threshold = reactor_opts.io_completion_notify_ms.defaulted() ? std::chrono::milliseconds::max() : reactor_opts.io_completion_notify_ms.get_value() * 1ms;
 
         if (smp_opts.num_io_groups) {
@@ -4215,7 +4215,7 @@ public:
                     }
 
                     unsigned q = queue_id_gen++;
-                    seastar_logger.debug("queue-id: {} mountpoints: {} devices: {}", q, d.mountpoints, d.devices);
+                    LOGMACRO(seastar_logger, log_level::debug, "queue-id: {} mountpoints: {} devices: {}", q, d.mountpoints, d.devices);
                     _disks.emplace(q, d);
                 }
             }
@@ -4229,7 +4229,7 @@ public:
 
     struct io_queue::config generate_config(unsigned q, unsigned nr_groups) const {
         const disk_params& p = _disks.at(q);
-        seastar_logger.debug("generate_config queue-id: {}", q);
+        LOGMACRO(seastar_logger, log_level::debug, "generate_config queue-id: {}", q);
         struct io_queue::config cfg;
 
         cfg.id = q;
@@ -4306,11 +4306,11 @@ unsigned smp::adjust_max_networking_aio_io_control_blocks(unsigned network_iocbs
     auto requested_aio_other = reserve_iocbs + (storage_iocbs + preempt_iocbs) * smp::count;
     auto requested_aio = requested_aio_network + requested_aio_other;
 
-    seastar_logger.debug("Intended AIO control block usage:");
-    seastar_logger.debug("");
+    LOGMACRO(seastar_logger, log_level::debug, "Intended AIO control block usage:");
+    LOGMACRO(seastar_logger, log_level::debug, "");
     log_aiocbs(log_level::debug, storage_iocbs, preempt_iocbs, network_iocbs, reserve_iocbs);
-    seastar_logger.debug("");
-    seastar_logger.debug("Available AIO control blocks = aio-max-nr - aio-nr = {} - {} = {}", aio_max_nr, aio_nr, available_aio);
+    LOGMACRO(seastar_logger, log_level::debug, "");
+    LOGMACRO(seastar_logger, log_level::debug, "Available AIO control blocks = aio-max-nr - aio-nr = {} - {} = {}", aio_max_nr, aio_nr, available_aio);
 
     if (available_aio < requested_aio) {
         if (available_aio >= requested_aio_other + smp::count) { // at least one queue for each shard
@@ -4617,13 +4617,13 @@ void smp::configure(const smp_options& smp_opts, const reactor_options& reactor_
                 if (!iog) {
                     struct io_queue::config qcfg = disk_config.generate_config(q, io_info.groups.size());
                     iog = std::make_shared<io_group>(std::move(qcfg), io_info.shards_in_group[group_idx]);
-                    seastar_logger.debug("allocate {} IO group with {} queues, queue-id {}", group_idx, io_info.shards_in_group[group_idx], q);
+                    LOGMACRO(seastar_logger, log_level::debug, "allocate {} IO group with {} queues, queue-id {}", group_idx, io_info.shards_in_group[group_idx], q);
                 }
                 group = iog;
             }
 
             io_info.queues[shard] = seastar::make_shared<io_queue>(std::move(group), engine()._io_sink);
-            seastar_logger.debug("attached {} queue to {} IO group, queue-id {}", shard, group_idx, q);
+            LOGMACRO(seastar_logger, log_level::debug, "attached {} queue to {} IO group, queue-id {}", shard, group_idx, q);
         }
     };
 

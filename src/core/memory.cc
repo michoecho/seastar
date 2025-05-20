@@ -2138,7 +2138,7 @@ void maybe_dump_memory_diagnostics(size_t size, bool is_aborting) {
 
     disable_report_on_alloc_failure_temporarily guard;
     if (seastar_memory_logger.is_enabled(log_level::debug)) {
-        seastar_memory_logger.debug("Failed to allocate {} bytes at {}", size, current_backtrace());
+        LOGMACRO(seastar_memory_logger, log_level::debug, "Failed to allocate {} bytes at {}", size, current_backtrace());
     }
 
     auto lvl = log_level::debug;
