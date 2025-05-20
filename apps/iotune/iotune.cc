@@ -457,7 +457,7 @@ public:
             return open_file_dma(testfile.string(), open_flags::rw | open_flags::create, std::move(options)).then([this, testfile] (file file) {
                 _file = file;
                 if (this_shard_id() == 0) {
-                    iotune_logger.info("Filesystem parameters: read alignment {}, write alignment {}", _file.disk_read_dma_alignment(), _file.disk_write_dma_alignment());
+                    LOGMACRO(iotune_logger, log_level::info, "Filesystem parameters: read alignment {}, write alignment {}", _file.disk_read_dma_alignment(), _file.disk_write_dma_alignment());
                 }
                 return remove_file(testfile.string()).then([this] {
                     return remove_file(_dirpath.string());
@@ -800,7 +800,7 @@ int main(int ac, char** av) {
                                        eval_dir, val, units, rec / 1000000000ULL);
                 }
 
-                iotune_logger.info("{} passed sanity checks", eval_dir);
+                LOGMACRO(iotune_logger, log_level::info, "{} passed sanity checks", eval_dir);
                 if (fs_check) {
                     continue;
                 }
@@ -808,7 +808,7 @@ int main(int ac, char** av) {
                 // Directory is the same object for all tests.
                 ::evaluation_directory test_directory(eval_dir, force_io_depth);
                 test_directory.discover_directory().get();
-                iotune_logger.info("Disk parameters: max_iodepth={} disks_per_array={} minimum_io_size={}",
+                LOGMACRO(iotune_logger, log_level::info, "Disk parameters: max_iodepth={} disks_per_array={} minimum_io_size={}",
                         test_directory.max_iodepth(), test_directory.disks_per_array(), test_directory.minimum_io_size());
 
                 if (test_directory.max_iodepth() < smp::count) {
@@ -818,7 +818,7 @@ int main(int ac, char** av) {
                 }
 
                 if (random_io_buffer_size != 0u) {
-                    iotune_logger.info("Forcing buffer_size={} for random IO!", random_io_buffer_size);
+                    LOGMACRO(iotune_logger, log_level::info, "Forcing buffer_size={} for random IO!", random_io_buffer_size);
                 }
 
                 ::iotune_multi_shard_context iotune_tests(test_directory, random_io_buffer_size);

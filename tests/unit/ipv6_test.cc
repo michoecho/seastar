@@ -32,7 +32,7 @@ static logger iplog("ipv6");
 
 static bool check_ipv6_support() {
     if (!engine().net().supports_ipv6()) {
-        iplog.info("No IPV6 support detected. Skipping...");
+        LOGMACRO(iplog, log_level::info, "No IPV6 support detected. Skipping...");
         return false;
     }
     return true;

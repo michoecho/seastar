@@ -154,7 +154,7 @@ SEASTAR_THREAD_TEST_CASE(foreign_ptr_destroy_test) {
             : done(done_)
         {}
         ~deferred() {
-            seastar_logger.info("~deferred");
+            LOGMACRO(seastar_logger, log_level::info, "~deferred");
             internal::run_in_background([&done = done, shard = this_shard_id()] {
                 return smp::submit_to(0, [&done, shard] {
                     done[shard].set_value(true);

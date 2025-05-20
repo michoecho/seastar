@@ -1956,7 +1956,7 @@ SEASTAR_TEST_CASE(test_async_throw_on_move) {
 
 future<> func4() {
     return yield().then([] {
-        seastar_logger.info("backtrace: {}", current_backtrace());
+        LOGMACRO(seastar_logger, log_level::info, "backtrace: {}", current_backtrace());
     });
 }
 
@@ -2258,7 +2258,7 @@ SEASTAR_THREAD_TEST_CASE(test_manual_clock_advance) {
 
 SEASTAR_THREAD_TEST_CASE(test_ready_future_across_shards) {
     if (smp::count == 1) {
-        seastar_logger.info("test_ready_future_across_shards requires at least 2 shards");
+        LOGMACRO(seastar_logger, log_level::info, "test_ready_future_across_shards requires at least 2 shards");
         return;
     }
 
@@ -2271,7 +2271,7 @@ SEASTAR_THREAD_TEST_CASE(test_ready_future_across_shards) {
 
 SEASTAR_THREAD_TEST_CASE(test_foreign_promise_set_value) {
     if (smp::count == 1) {
-        seastar_logger.info("test_foreign_promise_set_value requires at least 2 shards");
+        LOGMACRO(seastar_logger, log_level::info, "test_foreign_promise_set_value requires at least 2 shards");
         return;
     }
 

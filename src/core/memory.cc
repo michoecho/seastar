@@ -641,14 +641,14 @@ void set_heap_profiling_sampling_rate(size_t sample_rate) {
     bool current_sample_rate = get_cpu_mem().heap_prof_sampler.sampling_interval();
     if (sample_rate) {
         if (!current_sample_rate) {
-            seastar_logger.info("Enabling heap profiler - using {} bytes sampling rate", sample_rate);
+            LOGMACRO(seastar_logger, log_level::info, "Enabling heap profiler - using {} bytes sampling rate", sample_rate);
         } else {
             seastar_logger.warn("Ignoring change to heap profiler sample rate as heap profiling is already turned on");
             return;
         }
     } else {
         if (current_sample_rate) {
-            seastar_logger.info("Disabling heap profiler");
+            LOGMACRO(seastar_logger, log_level::info, "Disabling heap profiler");
         }
     }
     get_cpu_mem().heap_prof_sampler.set_sampling_interval(sample_rate);

@@ -146,7 +146,7 @@ static void test_spin_with_body(const char* what, void_fn body) {
     // Then the count_stacks mode tests that the right number of stacks
     // were output.
     for (auto count_stacks : {false, true}) {
-        testlog.info("Starting spin test: {}", what);
+        LOGMACRO(testlog, log_level::info, "Starting spin test: {}", what);
         std::atomic<unsigned> reports{};
         std::function<void()> reporter = count_stacks ? std::function<void()>{[&]{ ++reports; }} : nullptr;
         temporary_stall_detector_settings tsds(10ms, std::move(reporter));
@@ -155,7 +155,7 @@ static void test_spin_with_body(const char* what, void_fn body) {
             spin_some_cooperatively(100ms, body);
             spin(20ms, body);
         }
-        testlog.info("Ending spin test: {}", what);
+        LOGMACRO(testlog, log_level::info, "Ending spin test: {}", what);
         BOOST_CHECK_EQUAL(reports, count_stacks ? 5 : 0);
     }
 }

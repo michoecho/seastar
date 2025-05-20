@@ -29,7 +29,7 @@ logger applog("app");
 int main(int argc, char** argv) {
     seastar::app_template app;
     app.run(argc, argv, [] () -> future<> {
-        applog.info("Hello world!");
+        LOGMACRO(applog, log_level::info, "Hello world!");
         return make_ready_future<>();
     });
 }

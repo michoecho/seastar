@@ -1474,7 +1474,7 @@ reactor::update_blocked_reactor_notify_ms(std::chrono::milliseconds ms) {
     if (ms != cfg.threshold) {
         cfg.threshold = ms;
         _cpu_stall_detector->update_config(cfg);
-        seastar_logger.info("updated: blocked-reactor-notify-ms={}", ms.count());
+        LOGMACRO(seastar_logger, log_level::info, "updated: blocked-reactor-notify-ms={}", ms.count());
     }
 }
 
@@ -4640,7 +4640,7 @@ void smp::configure(const smp_options& smp_opts, const reactor_options& reactor_
     _all_event_loops_done.emplace(smp::count);
 
     auto backend_selector = reactor_opts.reactor_backend.get_selected_candidate();
-    seastar_logger.info("Reactor backend: {}", backend_selector);
+    LOGMACRO(seastar_logger, log_level::info, "Reactor backend: {}", backend_selector);
 
     unsigned i;
     auto smp_tmain = smp::_tmain;

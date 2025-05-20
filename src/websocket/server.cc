@@ -71,7 +71,7 @@ future<stop_iteration> server::accept_one(server_socket &listener) {
         }
         return make_ready_future<stop_iteration>(stop_iteration::yes);
     }).handle_exception([](std::exception_ptr ex) {
-        websocket_logger.info("accept failed: {}", ex);
+        LOGMACRO(websocket_logger, log_level::info, "accept failed: {}", ex);
         return make_ready_future<stop_iteration>(stop_iteration::yes);
     });
 }

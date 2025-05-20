@@ -506,7 +506,7 @@ SEASTAR_TEST_CASE(test_request_iovec_split) {
         }
     } while (std::chrono::steady_clock::now() < stop || iter < 32 || no_splits < 16 || no_tails < 16);
 
-    seastar_logger.info("{} iters ({} no-splits, {} no-tails)", iter, no_splits, no_tails);
+    LOGMACRO(seastar_logger, log_level::info, "{} iters ({} no-splits, {} no-tails)", iter, no_splits, no_tails);
 
     return make_ready_future<>();
 }

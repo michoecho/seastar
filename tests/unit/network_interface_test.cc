@@ -42,14 +42,14 @@ SEASTAR_TEST_CASE(list_interfaces) {
     BOOST_REQUIRE_GT(interfaces.size(), 0);
 
     for (auto& nif : interfaces) {
-        niflog.info("Iface: {}, index = {}, mtu = {}, loopback = {}, virtual = {}, up = {}",
+        LOGMACRO(niflog, log_level::info, "Iface: {}, index = {}, mtu = {}, loopback = {}, virtual = {}, up = {}",
             nif.name(), nif.index(), nif.mtu(), nif.is_loopback(), nif.is_virtual(), nif.is_up()
         );
         if (nif.hardware_address().size() >= 6) {
-            niflog.info("   HW: {}", net::ethernet_address(nif.hardware_address().data()));
+            LOGMACRO(niflog, log_level::info, "   HW: {}", net::ethernet_address(nif.hardware_address().data()));
         }
         for (auto& addr : nif.addresses()) {
-            niflog.info("   Addr: {}", addr);
+            LOGMACRO(niflog, log_level::info, "   Addr: {}", addr);
         }
     }
 
@@ -84,7 +84,7 @@ SEASTAR_TEST_CASE(match_ipv6_scope) {
         BOOST_REQUIRE_THROW(i->as_ipv4_address(), std::invalid_argument);
         BOOST_REQUIRE_THROW(na.as_ipv4_address(), std::invalid_argument);
 
-        niflog.info("Org: {}, Parsed: {}, Text: {}", *i, na, text);
+        LOGMACRO(niflog, log_level::info, "Org: {}, Parsed: {}, Text: {}", *i, na, text);
 
     }
 
