@@ -37,6 +37,7 @@
 #include <type_traits>
 #include <fmt/core.h>
 #include <fmt/format.h>
+#include <seastar/util/tracer.hh>
 #endif
 
 /// \addtogroup logging
@@ -587,4 +588,4 @@ template <> struct fmt::formatter<std::system_error> : fmt::ostream_formatter {}
 
 /// @}
 ///
-#define LOGMACRO(logger, level, fmtstring, ...) do { TRACEPOINT(level, fmtstring, __VA_ARGS__); logger.log(log_level::level, __VA_ARGS__); } while (0)
+#define LOGMACRO(logger, level, fmtstring, ...) do { TRACEPOINT(tracer::event_level::DEBUG, fmtstring __VA_OPT__(,) __VA_ARGS__); logger.log(level, fmtstring __VA_OPT__(,) __VA_ARGS__); } while (0)

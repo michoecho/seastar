@@ -89,7 +89,7 @@ struct constexpr_string {
     }
 };
 
-template <typename T> constexpr std::string type_to_sig();
+template <typename T> constexpr std::string type_to_sig() { return "unknown"; }
 
 template <> constexpr std::string type_to_sig<uint64_t>() { return "u64"; }
 template <> constexpr std::string type_to_sig<int64_t>() { return "i64"; }
@@ -109,9 +109,8 @@ constexpr std::string compute_signature() {
 }
 
 template <typename T, typename... Args>
-constexpr std::string compute_signature(constexpr_string name, T&&, Args&&... args) {
-    static_assert(sizeof...(Args) % 2 == 0, "Arguments must be in pairs");
-    std::string prefix = name.val() + ":" + type_to_sig<std::remove_cvref_t<T>>();
+constexpr std::string compute_signature(T*, Args&&... args) {
+    std::string prefix = type_to_sig<std::remove_cvref_t<T>>();
     if constexpr (sizeof...(Args) == 0) {
         return prefix;
     } else {
@@ -130,6 +129,9 @@ constexpr auto arrayify_constexpr_string(std::string result) {
 }
 #define COMPUTE_SIGNATURE(...) arrayify_constexpr_string<compute_signature(__VA_ARGS__).size()>(compute_signature(__VA_ARGS__))
 
+template<typename T>
+requires (!std::integral<T>)
+constexpr size_t compute_size_impl(const T& x) { return 0; }
 template<std::integral T>
 constexpr size_t compute_size_impl(const T& x) { return sizeof(x); }
 constexpr size_t compute_size_impl(void const* const& x) { return sizeof(x); }
@@ -146,17 +148,20 @@ requires std::is_trivially_copyable_v<From> {
     out += sizeof(x);
 }
 
+template<typename T>
+requires (!std::integral<T>)
+inline void serialize_tracepoint_impl(std::byte*& out, const T& x) {}
 template<std::integral T>
-inline void serialize_impl(std::byte*& out, const T& x) { write_int(out, x); }
-inline void serialize_impl(std::byte*& out, void const* const& x) { write_int(out, uint64_t(x)); }
-inline void serialize_impl(std::byte*& out, const std::span<const std::byte>& x) {
+inline void serialize_tracepoint_impl(std::byte*& out, const T& x) { write_int(out, x); }
+inline void serialize_tracepoint_impl(std::byte*& out, void const* const& x) { write_int(out, uint64_t(x)); }
+inline void serialize_tracepoint_impl(std::byte*& out, const std::span<const std::byte>& x) {
     write_int(out, uint16_t(x.size()));
     memcpy(out, x.data(), x.size());
     out += x.size();
 }
 template <typename... Args>
-void serialize(std::byte*& out, const Args&... args) {
-    (serialize_impl(out, args), ...);
+void serialize_tracepoint(std::byte*& out, const Args&... args) {
+    (serialize_tracepoint_impl(out, args), ...);
 }
 
 typedef struct {
@@ -176,30 +181,24 @@ extern __thread tracer* local_tracer;
 #define NARGS_IMPL(_0,_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18,_19,_20, N, ...) N
 
 #define SIG_0()
-#define SIG_2(k, v) constexpr_string(k), std::remove_cvref_t<decltype(v)>()
-#define SIG_4(k, v, ...) constexpr_string(k), std::remove_cvref_t<decltype(v)>(), SIG_2(__VA_ARGS__)
-#define SIG_6(k, v, ...) constexpr_string(k), std::remove_cvref_t<decltype(v)>(), SIG_4(__VA_ARGS__)
-#define SIG_8(k, v, ...) constexpr_string(k), std::remove_cvref_t<decltype(v)>(), SIG_6(__VA_ARGS__)
-#define SIG_10(k, v, ...) constexpr_string(k), std::remove_cvref_t<decltype(v)>(), SIG_8(__VA_ARGS__)
-#define SIG_12(k, v, ...) constexpr_string(k), std::remove_cvref_t<decltype(v)>(), SIG_10(__VA_ARGS__)
-#define SIG_14(k, v, ...) constexpr_string(k), std::remove_cvref_t<decltype(v)>(), SIG_12(__VA_ARGS__)
-#define SIG_16(k, v, ...) constexpr_string(k), std::remove_cvref_t<decltype(v)>(), SIG_14(__VA_ARGS__)
+#define SIG_1(v) (std::remove_cvref_t<decltype(v)>*)(nullptr)
+#define SIG_2(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_1(__VA_ARGS__)
+#define SIG_3(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_2(__VA_ARGS__)
+#define SIG_4(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_3(__VA_ARGS__)
+#define SIG_5(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_4(__VA_ARGS__)
+#define SIG_6(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_5(__VA_ARGS__)
+#define SIG_7(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_6(__VA_ARGS__)
+#define SIG_8(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_7(__VA_ARGS__)
+#define SIG_9(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_8(__VA_ARGS__)
+#define SIG_10(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_9(__VA_ARGS__)
+#define SIG_11(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_10(__VA_ARGS__)
+#define SIG_12(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_11(__VA_ARGS__)
+#define SIG_13(v, ...) (std::remove_cvref_t<decltype(v)>*)(nullptr), SIG_12(__VA_ARGS__)
 #define SIG_N(N, ...) COMBINE_TOKENS(SIG_, N)(__VA_ARGS__)
 #define SIG(...) SIG_N(NARGS(0, ##__VA_ARGS__), ##__VA_ARGS__)
 
-#define VARLIST_0()
-#define VARLIST_2(k, v) v
-#define VARLIST_4(k, v, ...) v, VARLIST_2(__VA_ARGS__)
-#define VARLIST_6(k, v, ...) v, VARLIST_4(__VA_ARGS__)
-#define VARLIST_8(k, v, ...) v, VARLIST_6(__VA_ARGS__)
-#define VARLIST_10(k, v, ...) v, VARLIST_8(__VA_ARGS__)
-#define VARLIST_12(k, v, ...) v, VARLIST_10(__VA_ARGS__)
-#define VARLIST_14(k, v, ...) v, VARLIST_12(__VA_ARGS__)
-#define VARLIST_16(k, v, ...) v, VARLIST_14(__VA_ARGS__)
-#define VARLIST_N(N, ...) COMBINE_TOKENS(VARLIST_, N)(__VA_ARGS__)
-#define VARLIST(...) VARLIST_N(NARGS(0, ##__VA_ARGS__), ##__VA_ARGS__)
-
 #define TRACEPOINT(level, name, ...) { \
+    using namespace seastar; \
     static constexpr auto sig __attribute__((section("tracepoint_signatures"), used)) = \
         COMPUTE_SIGNATURE(SIG(__VA_ARGS__)); \
     static constexpr char namearr[] __attribute__((section("tracepoint_names"), used)) = name; \
@@ -207,13 +206,13 @@ extern __thread tracer* local_tracer;
     static constexpr tracepoint_entry tp __attribute__((section("tracepoints"), used)) = { \
         namearr, filearr, __LINE__, __PRETTY_FUNCTION__, sig.data() \
     }; \
-    size_t sz = compute_size(VARLIST(__VA_ARGS__)); \
+    size_t sz = compute_size(__VA_ARGS__); \
     auto out = local_tracer->write(level, sz + 16); \
     seastar::write_le<uintptr_t>(reinterpret_cast<char*>(out), reinterpret_cast<uintptr_t>(&tp)); \
     out += sizeof(uintptr_t); \
     seastar::write_le<uint64_t>(reinterpret_cast<char*>(out), rdtsc()); \
     out += sizeof(uint64_t); \
-    serialize(out __VA_OPT__(,) VARLIST(__VA_ARGS__)); \
+    serialize_tracepoint(out __VA_OPT__(,) __VA_ARGS__); \
 }
 
 } // namespace seastar
