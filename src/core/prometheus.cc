@@ -244,7 +244,7 @@ static bool write_delimited_to(const google::protobuf::MessageLite& message,
 
     uint8_t* buffer = output.GetDirectBufferForNBytesAndAdvance(size);
     if (buffer != nullptr) {
-        message.SerializeWithCachedSizesToArray(buffer);
+        (void)message.SerializeWithCachedSizesToArray(buffer);
     } else {
         message.SerializeWithCachedSizes(&output);
         if (output.HadError()) {
