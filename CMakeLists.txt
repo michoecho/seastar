@@ -47,6 +47,9 @@ project (Seastar
   VERSION 1.0
   LANGUAGES CXX)
 
+# Keep build IDs available for backtraces in every build mode.
+add_link_options (-Wl,--build-id=sha1)
+
 set (Seastar_ALLOC_FAILURE_INJECTION
   "DEFAULT"
   CACHE

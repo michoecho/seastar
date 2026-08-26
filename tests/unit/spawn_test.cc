@@ -27,9 +27,10 @@
 using namespace seastar;
 
 static seastar::logger testlog("testlog");
+static constexpr const char* env_cmd = "/usr/bin/env";
 
 SEASTAR_TEST_CASE(test_spawn_success) {
-    return spawn_process("/bin/true").then([] (auto process) {
+    return spawn_process(env_cmd, {.argv = {env_cmd, "true"}}).then([] (auto process) {
         return process.wait();
     }).then([] (auto wstatus) {
         auto* exit_status = std::get_if<process::wait_exited>(&wstatus);
@@ -39,7 +40,7 @@ SEASTAR_TEST_CASE(test_spawn_success) {
 }
 
 SEASTAR_TEST_CASE(test_spawn_failure) {
-    return spawn_process("/bin/false").then([] (auto process) {
+    return spawn_process(env_cmd, {.argv = {env_cmd, "false"}}).then([] (auto process) {
         return process.wait();
     }).then([] (auto wstatus) {
         auto* exit_status = std::get_if<process::wait_exited>(&wstatus);
@@ -60,8 +61,7 @@ SEASTAR_TEST_CASE(test_spawn_program_does_not_exist) {
 }
 
 SEASTAR_TEST_CASE(test_spawn_echo) {
-    const char* echo_cmd = "/bin/echo";
-    return spawn_process(echo_cmd, {.argv = {echo_cmd, "-n", "hello", "world"}}).then([] (auto process) {
+    return spawn_process(env_cmd, {.argv = {env_cmd, "echo", "-n", "hello", "world"}}).then([] (auto process) {
         auto cout = process.cout();
         return do_with(std::move(process), std::move(cout), bool(false), [](auto& p, auto& cout, auto& matched) {
             using consumption_result_type = typename input_stream<char>::consumption_result_type;
@@ -96,7 +96,7 @@ SEASTAR_TEST_CASE(test_spawn_echo) {
 
 SEASTAR_TEST_CASE(test_spawn_input) {
     static const sstring text = "hello world\n";
-    return spawn_process("/bin/cat").then([] (auto process) {
+    return spawn_process(env_cmd, {.argv = {env_cmd, "cat"}}).then([] (auto process) {
         auto cin = process.cin();
         auto cout = process.cout();
         return do_with(std::move(process), std::move(cin), std::move(cout), [](auto& p, auto& cin, auto& cout) {
@@ -123,9 +123,8 @@ SEASTAR_TEST_CASE(test_spawn_input) {
 }
 
 SEASTAR_TEST_CASE(test_spawn_kill) {
-    const char* sleep_cmd = "/bin/sleep";
     // sleep for 10s, but terminate it right away.
-    return spawn_process(sleep_cmd, {.argv = {sleep_cmd, "10"}}).then([] (auto process) {
+    return spawn_process(env_cmd, {.argv = {env_cmd, "sleep", "10"}}).then([] (auto process) {
         auto start = std::chrono::high_resolution_clock::now();
         return do_with(std::move(process), [](auto& p) {
             p.terminate();

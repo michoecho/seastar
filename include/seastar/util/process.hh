@@ -44,7 +44,8 @@ namespace seastar {
 struct spawn_parameters {
     /// The arguments passed to the program
     std::vector<sstring> argv;
-    /// The environment variables for the program
+    /// The environment variables for the program. If empty, the current
+    /// environment is inherited.
     std::vector<sstring> env;
 };
 

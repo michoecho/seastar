@@ -2119,6 +2119,14 @@ reactor::spawn(std::string_view pathname_view,
     argvp.push_back(nullptr);
 
     std::vector<const char*> envp;
+    if (env.empty()) {
+        // An omitted environment means inherit the environment of the
+        // Seastar process.  In particular, this preserves PATH for
+        // interpreter-based executables such as /usr/bin/env scripts.
+        for (auto* entry = ::environ; entry && *entry; ++entry) {
+            env.emplace_back(*entry);
+        }
+    }
     std::transform(env.cbegin(), env.cend(), std::back_inserter(envp),
                     [](auto& s) { return s.c_str(); });
     envp.push_back(nullptr);
