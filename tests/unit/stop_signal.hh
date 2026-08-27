@@ -38,7 +38,7 @@ namespace seastar_apps_lib {
 ///
 /// Example:
 /// \code
-/// #include <seastar/apps/lib/stop_signal.hh>
+/// #include "stop_signal.hh"
 /// ...
 /// int main() {
 /// ...

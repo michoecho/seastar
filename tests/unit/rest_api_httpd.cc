@@ -33,7 +33,7 @@
 #include <seastar/core/thread.hh>
 #include <seastar/net/inet_address.hh>
 #include <seastar/util/defer.hh>
-#include "../../apps/lib/stop_signal.hh"
+#include "stop_signal.hh"
 #include "api.json.hh"
 
 namespace bpo = boost::program_options;

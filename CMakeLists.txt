@@ -252,10 +252,6 @@ else ()
   set (Seastar_MASTER_PROJECT OFF)
 endif ()
 
-option (Seastar_APPS
-  "Enable application targets."
-  ${Seastar_MASTER_PROJECT})
-
 set (Seastar_CXX_FLAGS
   ""
   CACHE
@@ -268,24 +264,12 @@ set (Seastar_SOURCE_SUBDIR
   STRING
   "When non-empty, add -ffile-prefix-map rules so that gdb can resolve Seastar sources. Set to the path of the Seastar source tree relative to the consumer project root (e.g. 'seastar/'). The rules map CMAKE_CURRENT_BINARY_DIR to '.' and paths under it to this subdir, and are appended after Seastar_CXX_FLAGS so they take precedence over any broader -ffile-prefix-map rule.")
 
-option (Seastar_DEMOS
-  "Enable demonstration targets."
-  ${Seastar_MASTER_PROJECT})
-
 option (Seastar_DOCS
   "Enable documentation targets."
   ${Seastar_MASTER_PROJECT})
 
 option (Seastar_DPDK
   "Enable DPDK support."
-  OFF)
-
-option (Seastar_EXCLUDE_APPS_FROM_ALL
-  "When enabled alongside Seastar_APPS, do not build applications by default."
-  OFF)
-
-option (Seastar_EXCLUDE_DEMOS_FROM_ALL
-  "When enabled alongside Seastar_DEMOS, do not build demonstrations by default."
   OFF)
 
 option (Seastar_EXCLUDE_TESTS_FROM_ALL
@@ -1387,39 +1371,11 @@ if (Seastar_TESTING)
 endif ()
 
 #
-# Demonstrations.
-#
-
-if (Seastar_DEMOS)
-  if (Seastar_EXCLUDE_DEMOS_FROM_ALL)
-    set (exclude EXCLUDE_FROM_ALL)
-  else ()
-    set (exclude "")
-  endif ()
-
-  add_subdirectory (demos ${exclude})
-endif ()
-
-#
 # Documentation.
 #
 
 if (Seastar_DOCS)
   add_subdirectory (doc)
-endif ()
-
-#
-# Applications.
-#
-
-if (Seastar_APPS)
-  if (Seastar_EXCLUDE_APPS_FROM_ALL)
-    set (exclude EXCLUDE_FROM_ALL)
-  else ()
-    set (exclude "")
-  endif ()
-
-  add_subdirectory (apps ${exclude})
 endif ()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Dev")

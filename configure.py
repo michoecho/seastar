@@ -231,8 +231,6 @@ add_tristate(
     help='LTTng-UST tracepoint support for IO tracing')
 arg_parser.add_argument('--allocator-page-size', dest='alloc_page_size', type=int, help='override allocator page size')
 arg_parser.add_argument('--without-tests', dest='exclude_tests', action='store_true', help='Do not build tests by default')
-arg_parser.add_argument('--without-apps', dest='exclude_apps', action='store_true', help='Do not build applications by default')
-arg_parser.add_argument('--without-demos', dest='exclude_demos', action='store_true', help='Do not build demonstrations by default')
 arg_parser.add_argument('--split-dwarf', dest='split_dwarf', action='store_true', default=False,
                         help='use of split dwarf (https://gcc.gnu.org/wiki/DebugFission) to speed up linking')
 arg_parser.add_argument('--compile-commands-json', dest='cc_json', action='store_true',
@@ -305,8 +303,6 @@ def configure_mode(mode):
         '-DSeastar_API_LEVEL={}'.format(args.api_level),
         '-DSeastar_SCHEDULING_GROUPS_COUNT={}'.format(args.scheduling_groups_count),
         tr(args.exclude_tests, 'EXCLUDE_TESTS_FROM_ALL'),
-        tr(args.exclude_apps, 'EXCLUDE_APPS_FROM_ALL'),
-        tr(args.exclude_demos, 'EXCLUDE_DEMOS_FROM_ALL'),
         tr(CFLAGS, 'CXX_FLAGS'),
         tr(LDFLAGS, 'LD_FLAGS'),
         tr(args.cxx_modules, 'MODULE'),

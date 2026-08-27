@@ -26,7 +26,7 @@
 #include <seastar/core/relabel_config.hh>
 #include <seastar/core/internal/estimated_histogram.hh>
 #include <seastar/util/closeable.hh>
-#include "../../apps/lib/stop_signal.hh"
+#include "stop_signal.hh"
 #include <map>
 #include <vector>
 #include <yaml-cpp/yaml.h>

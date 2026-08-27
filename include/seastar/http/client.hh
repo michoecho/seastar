@@ -89,7 +89,7 @@ public:
 /**
  * \brief Class connection represents an HTTP connection over a given transport
  *
- * Check the demos/http_client_demo.cc for usage example
+ * Check tests/unit/httpd_test.cc for usage example
  */
 
 class connection : public enable_shared_from_this<connection> {

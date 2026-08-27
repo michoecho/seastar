@@ -160,8 +160,6 @@ If you'd like to use `cmake-cooking` to set up a development environment which i
 cooking_ingredient (Seastar
   COOKING_RECIPE <DEFAULT>
   COOKING_CMAKE_ARGS
-    -DSeastar_APPS=OFF
-    -DSeastar_DEMOS=OFF
     -DSeastar_DOCS=OFF
     -DSeastar_TESTING=OFF
   EXTERNAL_PROJECT_ARGS

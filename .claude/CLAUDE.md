@@ -30,11 +30,11 @@ ninja -C build/<mode> -t targets all
 ### Common Build Examples
 
 ```bash
-# Build ioinfo tool in dev mode
-ninja -C build/dev apps/io_tester/ioinfo
+# Build the seastar library in dev mode
+ninja -C build/dev seastar
 
-# Build io_tester in dev mode
-ninja -C build/dev apps/io_tester/io_tester
+# Build the rpc library in dev mode
+ninja -C build/dev seastar_rpc
 
 # Build all in release mode
 ninja -C build/release

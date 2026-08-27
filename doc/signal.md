@@ -47,4 +47,4 @@ int main(int argc, char** argv) {
 ```
 
 - [tests/unit/signal_test.cc](../tests/unit/signal_test.cc)
-- [apps/lib/stop_signal.hh](../apps/lib/stop_signal.hh)
+- [tests/unit/stop_signal.hh](../tests/unit/stop_signal.hh)

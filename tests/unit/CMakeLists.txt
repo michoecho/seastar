@@ -380,21 +380,6 @@ seastar_add_test (abortable_fifo
 seastar_add_test (io_queue
   SOURCES io_queue_test.cc)
 
-if (Seastar_LTTNG)
-  add_custom_target (test_unit_io_trace_lttng_run
-    COMMAND ${CMAKE_COMMAND} -E env ${Seastar_TEST_ENVIRONMENT}
-      ${CMAKE_CURRENT_SOURCE_DIR}/io_trace_test.py
-      --io-tester $<TARGET_FILE:app_io_tester>
-    USES_TERMINAL)
-  add_dependencies (test_unit_io_trace_lttng_run app_io_tester)
-  add_test (
-    NAME Seastar.unit.io_trace_lttng
-    COMMAND ${CMAKE_COMMAND} --build ${Seastar_BINARY_DIR} --target test_unit_io_trace_lttng_run)
-  set_tests_properties (Seastar.unit.io_trace_lttng
-    PROPERTIES
-      TIMEOUT ${Seastar_TEST_TIMEOUT})
-endif ()
-
 seastar_add_test (fair_queue
   SOURCES fair_queue_test.cc)
 
@@ -936,6 +921,7 @@ seastar_generate_swagger (
 
 add_executable (rest_api_httpd
   ${rest_api_httpd_swagger_files}
+  stop_signal.hh
   rest_api_httpd.cc)
 target_link_libraries (rest_api_httpd
   PRIVATE seastar_private)
@@ -956,6 +942,7 @@ set_tests_properties (Seastar.unit.json2code
     TIMEOUT ${Seastar_TEST_TIMEOUT})
 
 add_executable (metrics_tester
+  stop_signal.hh
   metrics_tester.cc)
 target_link_libraries (metrics_tester
   PRIVATE
