@@ -282,13 +282,16 @@ void add_to_flush_poller(output_stream<char>&) noexcept { unimplemented(); }
 // Cross-shard messaging.
 //
 
-thread_local smp_message_queue** smp::_qs;
+unsigned smp::_shard_count = 1;
+smp* smp::_this_smp = nullptr;
 
-void smp_message_queue::submit_item(shard_id, smp_timeout_clock::time_point, std::unique_ptr<work_item>) {
+namespace internal {
+
+future<> smp_submit_to_erased(shard_id, smp_submit_to_options, noncopyable_function<future<> ()>) {
     unimplemented();
 }
 
-void smp_message_queue::respond(work_item*) { unimplemented(); }
+} // namespace internal
 
 //
 // Memory.

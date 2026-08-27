@@ -604,6 +604,9 @@ target_sources (seastar-core
   include/seastar/core/shared_ptr.hh
   include/seastar/core/simple-stream.hh
   include/seastar/core/smp.hh
+  include/seastar/core/smp-common.hh
+  include/seastar/core/smp-reactor.hh
+  include/seastar/core/smp-simulator.hh
   include/seastar/core/sstring.hh
   include/seastar/core/task.hh
   include/seastar/core/temporary_buffer.hh
@@ -666,6 +669,25 @@ target_link_libraries (seastar-core
     Boost::program_options
     fmt::fmt)
 
+# The simulator-mode variant of `seastar-core`.
+#
+# Some of the core interfaces have more than one implementation behind them,
+# and the headers select between them on `SEASTAR_SIMULATOR` (see
+# `smp.hh`).  This target carries the same headers as `seastar-core` plus
+# that definition, so that code compiled against it is bound to the
+# simulator's implementations instead of the reactor's.
+#
+# The two variants are mutually exclusive: object code compiled against one
+# must not be linked with object code compiled against the other.
+add_library (seastar-core-simulator INTERFACE)
+
+add_library (Seastar::seastar-core-simulator ALIAS seastar-core-simulator)
+
+target_link_libraries (seastar-core-simulator
+  INTERFACE seastar-core)
+
+target_compile_definitions (seastar-core-simulator
+  INTERFACE SEASTAR_SIMULATOR)
 
 add_library (seastar
   ${http_chunk_parsers_file}
@@ -1405,7 +1427,7 @@ target_compile_options (seastar-simulator
 
 target_link_libraries (seastar-simulator
   PUBLIC
-    seastar-core)
+    seastar-core-simulator)
 
 target_compile_features (seastar-simulator
   PUBLIC cxx_std_${CMAKE_CXX_STANDARD})
@@ -1429,11 +1451,40 @@ target_compile_definitions (seastar_simulator_link_test
 target_compile_options (seastar_simulator_link_test
   PRIVATE ${Seastar_PRIVATE_CXX_FLAGS})
 
+# `seastar_rpc` proper is compiled against the reactor's variant of the core
+# headers, since that is what its consumers link.  To exercise RPC against
+# the simulator it has to be compiled again, this time in simulator mode --
+# same sources, different implementation selected behind the core headers.
+add_library (seastar_rpc_simulator
+  src/rpc/lz4_compressor.cc
+  src/rpc/lz4_fragmented_compressor.cc
+  src/rpc/rpc.cc)
+
+target_compile_definitions (seastar_rpc_simulator
+  PRIVATE ${Seastar_PRIVATE_COMPILE_DEFINITIONS})
+
+target_compile_options (seastar_rpc_simulator
+  PRIVATE ${Seastar_PRIVATE_CXX_FLAGS})
+
+target_link_libraries (seastar_rpc_simulator
+  PUBLIC
+    seastar-core-simulator
+  PRIVATE
+    lz4::lz4)
+
+target_compile_features (seastar_rpc_simulator
+  PUBLIC cxx_std_${CMAKE_CXX_STANDARD})
+
+set_target_properties (seastar_rpc_simulator
+  PROPERTIES
+    CXX_STANDARD ${CMAKE_CXX_STANDARD}
+    CXX_EXTENSIONS ON)
+
 target_link_libraries (seastar_simulator_link_test
   PRIVATE
     -Wl,--no-undefined
     -Wl,--push-state,--no-as-needed
-    seastar_rpc
+    seastar_rpc_simulator
     seastar-simulator
     -Wl,--pop-state)
 
