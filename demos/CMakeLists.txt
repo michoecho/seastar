@@ -82,6 +82,8 @@ seastar_add_demo (l3
 
 seastar_add_demo (rpc
   SOURCES rpc_demo.cc)
+target_link_libraries (demo_rpc
+  PRIVATE seastar_rpc)
 
 seastar_add_demo (scheduling_group
   SOURCES scheduling_group_demo.cc)

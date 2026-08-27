@@ -1,0 +1,17 @@
+prefix=@Seastar_PKG_CONFIG_PREFIX@
+exec_prefix=${prefix}
+libdir=@Seastar_PKG_CONFIG_LIBDIR@
+
+Name: Seastar RPC
+Url: http://seastar-project.org
+Description: RPC library for applications built with Seastar
+Version: @PROJECT_VERSION@
+
+# Us.
+seastar_rpc_cflags=
+seastar_rpc_libs=${libdir}/$<TARGET_FILE_NAME:seastar_rpc>
+
+Requires: seastar >= 1.0
+Conflicts:
+Cflags: ${seastar_rpc_cflags}
+Libs: ${seastar_rpc_libs}

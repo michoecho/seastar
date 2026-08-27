@@ -499,7 +499,8 @@ seastar_add_test (request_parser
 seastar_add_test (rpc
   SOURCES
     loopback_socket.hh
-    rpc_test.cc)
+    rpc_test.cc
+  LIBRARIES seastar_rpc)
 
 seastar_add_test (semaphore
   SOURCES

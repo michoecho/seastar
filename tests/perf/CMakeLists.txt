@@ -30,7 +30,7 @@ macro (seastar_add_test name)
     parsed_args
     "NO_SEASTAR_PERF_TESTING_LIBRARY"
     ""
-    "SOURCES"
+    "SOURCES;LIBRARIES"
     ${args})
 
   set (target test_perf_${name})
@@ -43,6 +43,8 @@ macro (seastar_add_test name)
       seastar_private
       seastar_perf_testing)
   endif ()
+
+  list (APPEND libraries ${parsed_args_LIBRARIES})
 
   target_link_libraries (${target}
     PRIVATE ${libraries})
@@ -74,7 +76,8 @@ seastar_add_test (future_util
   SOURCES future_util_perf.cc)
 
 seastar_add_test (rpc
-  SOURCES rpc_perf.cc)
+  SOURCES rpc_perf.cc
+  LIBRARIES seastar_rpc)
 
 seastar_add_test (smp_submit_to
   SOURCES smp_submit_to_perf.cc

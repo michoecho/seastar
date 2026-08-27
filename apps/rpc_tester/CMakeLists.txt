@@ -24,4 +24,6 @@ seastar_add_app (rpc_tester
   SOURCES rpc_tester.cc)
 
 target_link_libraries (app_rpc_tester
-  PRIVATE yaml-cpp::yaml-cpp)
+  PRIVATE
+    seastar_rpc
+    yaml-cpp::yaml-cpp)

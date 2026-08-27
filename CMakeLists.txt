@@ -683,12 +683,6 @@ add_library (seastar
   include/seastar/net/unix_address.hh
   include/seastar/net/virtio-interface.hh
   include/seastar/net/virtio.hh
-  include/seastar/rpc/lz4_compressor.hh
-  include/seastar/rpc/lz4_fragmented_compressor.hh
-  include/seastar/rpc/multi_algo_compressor_factory.hh
-  include/seastar/rpc/rpc.hh
-  include/seastar/rpc/rpc_impl.hh
-  include/seastar/rpc/rpc_types.hh
   include/seastar/util/alloc_failure_injector.hh
   include/seastar/util/backtrace.hh
   include/seastar/util/bool_class.hh
@@ -796,9 +790,6 @@ add_library (seastar
   src/net/udp.cc
   src/net/unix_address.cc
   src/net/virtio.cc
-  src/rpc/lz4_compressor.cc
-  src/rpc/lz4_fragmented_compressor.cc
-  src/rpc/rpc.cc
   src/util/alloc_failure_injector.cc
   src/util/backtrace.cc
   src/util/conversions.cc
@@ -1278,6 +1269,53 @@ target_link_libraries (seastar_private
   INTERFACE seastar)
 
 #
+# The `seastar_rpc` library.
+#
+# RPC is layered on top of the core `seastar` library and built separately, so
+# that consumers which do not use it need not link it (nor its lz4 dependency).
+#
+
+add_library (seastar_rpc
+  include/seastar/rpc/lz4_compressor.hh
+  include/seastar/rpc/lz4_fragmented_compressor.hh
+  include/seastar/rpc/multi_algo_compressor_factory.hh
+  include/seastar/rpc/rpc.hh
+  include/seastar/rpc/rpc_impl.hh
+  include/seastar/rpc/rpc_types.hh
+  src/rpc/lz4_compressor.cc
+  src/rpc/lz4_fragmented_compressor.cc
+  src/rpc/rpc.cc)
+
+add_library (Seastar::seastar_rpc ALIAS seastar_rpc)
+
+target_compile_definitions (seastar_rpc
+  PRIVATE ${Seastar_PRIVATE_COMPILE_DEFINITIONS})
+
+target_compile_options (seastar_rpc
+  PRIVATE ${Seastar_PRIVATE_CXX_FLAGS})
+
+target_link_libraries (seastar_rpc
+  PUBLIC
+    seastar
+  PRIVATE
+    lz4::lz4)
+
+target_compile_features (seastar_rpc
+  PUBLIC cxx_std_${CMAKE_CXX_STANDARD})
+
+set_target_properties (seastar_rpc
+  PROPERTIES
+    CXX_STANDARD ${CMAKE_CXX_STANDARD}
+    CXX_EXTENSIONS ON)
+
+if (Seastar_MODULE)
+  # The C++20 module unit aggregates the RPC headers and re-exports the
+  # seastar::rpc namespace, so the `seastar` module target needs the RPC
+  # object code available at link time.
+  target_link_libraries (seastar PRIVATE seastar_rpc)
+endif ()
+
+#
 # The testing library.
 #
 
@@ -1389,7 +1427,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Dev")
   include (CheckIncludeStyle)
   add_custom_target (checkheaders)
   add_custom_target (check-include-style)
-  foreach (lib seastar seastar_testing seastar_perf_testing)
+  foreach (lib seastar seastar_rpc seastar_testing seastar_perf_testing)
     if (TARGET ${lib})
       seastar_check_self_contained (checkheaders ${lib}
         INCLUDE "\\.hh$"
@@ -1445,6 +1483,11 @@ if (Seastar_INSTALL)
     ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/seastar-testing-install.pc.in
     @ONLY)
 
+  configure_file (
+    ${CMAKE_CURRENT_SOURCE_DIR}/pkgconfig/seastar-rpc.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/seastar-rpc-install.pc.in
+    @ONLY)
+
   # Set paths in pkg-config files for direct use in the build directory.
   set (Seastar_PKG_CONFIG_PREFIX ${CMAKE_CURRENT_BINARY_DIR})
   set (Seastar_PKG_CONFIG_LIBDIR ${CMAKE_CURRENT_BINARY_DIR})
@@ -1460,6 +1503,11 @@ if (Seastar_INSTALL)
     ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/seastar-testing.pc.in
     @ONLY)
 
+  configure_file (
+    ${CMAKE_CURRENT_SOURCE_DIR}/pkgconfig/seastar-rpc.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/seastar-rpc.pc.in
+    @ONLY)
+
   file (GENERATE
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/seastar${Seastar_PC}
     INPUT ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/seastar${Seastar_PC}.in)
@@ -1469,12 +1517,20 @@ if (Seastar_INSTALL)
     INPUT ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/seastar-testing.pc.in)
 
   file (GENERATE
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/seastar-rpc.pc
+    INPUT ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/seastar-rpc.pc.in)
+
+  file (GENERATE
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/seastar-install${Seastar_PC}
     INPUT ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/seastar-install${Seastar_PC}.in)
 
   file (GENERATE
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/seastar-testing-install.pc
     INPUT ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/seastar-testing-install.pc.in)
+
+  file (GENERATE
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/seastar-rpc-install.pc
+    INPUT ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/seastar-rpc-install.pc.in)
 
   include (CMakePackageConfigHelpers)
   set (install_cmakedir ${CMAKE_INSTALL_LIBDIR}/cmake/Seastar)
@@ -1494,6 +1550,7 @@ if (Seastar_INSTALL)
   set (seastar_install_targets
     TARGETS
       seastar
+      seastar_rpc
       seastar_testing
       seastar_perf_testing
     EXPORT seastar-export
@@ -1565,6 +1622,11 @@ if (Seastar_INSTALL)
     FILES ${CMAKE_CURRENT_BINARY_DIR}/seastar-testing-install.pc
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
     RENAME seastar-testing.pc)
+
+  install (
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/seastar-rpc-install.pc
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+    RENAME seastar-rpc.pc)
 
   if (Seastar_MODULE)
     install (
