@@ -80,6 +80,14 @@ public:
     /// The number of shards available in this `smp` instance. Does not change over the lifetime of the instance.
     unsigned shard_count() const { return _shard_count; }
 
+    /// Establishes how many shards the simulation has.
+    ///
+    /// Called by the simulator's engine once, before anything runs on a
+    /// shard.  In the reactor's `smp` the shard count comes from the
+    /// command line as the reactor starts; here it comes from whoever
+    /// constructed the engine.
+    static void set_shard_count(unsigned n) noexcept;
+
     /// Runs a function on a remote core.
     ///
     /// \param t designates the core to run the function on (may be a remote

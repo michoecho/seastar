@@ -1402,19 +1402,24 @@ endif ()
 #
 # The `seastar-simulator` library.
 #
-# An alternative implementation of the non-core half of Seastar, intended to
-# grow into a deterministic simulator which can drive Seastar code under test
-# without a reactor.  It stands in for `seastar`: it defines the declarations
-# which `seastar-core` leaves open, so that a consumer compiled against
+# An alternative implementation of the non-core half of Seastar: a
+# deterministic simulator which drives Seastar code under test without a
+# reactor.  It stands in for `seastar`: it defines the declarations which
+# `seastar-core` leaves open, so that a consumer compiled against
 # `seastar-core` alone -- currently `seastar_rpc` -- can be linked against it
 # instead of against the real implementation.
 #
-# It is a skeleton at this point.  Every definition aborts; what the library
-# provides so far is the boundary itself, and the guarantee (enforced by
-# `seastar_simulator_link_test` below) that the boundary is complete.
+# Everything the simulated program can observe belongs to one engine: the
+# shards, the run queue, the timers, and a simulated network.  See
+# `src/simulator/engine.hh` for what an engine is and
+# `src/simulator/simulator.cc` for how it drives the API.
+#
+# `seastar_simulator_link_test` below keeps the boundary honest, and now also
+# runs a scenario over it.
 #
 
 add_library (seastar-simulator
+  src/simulator/engine.hh
   src/simulator/simulator.cc)
 
 add_library (Seastar::seastar-simulator ALIAS seastar-simulator)
@@ -1441,7 +1446,11 @@ set_target_properties (seastar-simulator
 # simulator being complete is only really tested by linking a program.  This
 # executable pulls in the whole of `seastar_rpc` and forbids undefined
 # symbols, which makes the build fail as soon as RPC starts referring to
-# something the simulator has not defined yet.  It is not meant to be run.
+# something the simulator has not defined yet.
+#
+# It is also the simulator's validation scenario: running it drives
+# `seastar_rpc` -- a server, a client, and a stream between two shards -- over
+# the simulated network, and exits non-zero if anything misbehaves.
 add_executable (seastar_simulator_link_test
   src/simulator/main.cc)
 
