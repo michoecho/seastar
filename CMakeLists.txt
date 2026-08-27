@@ -1451,6 +1451,13 @@ set_target_properties (seastar-simulator
 # It is also the simulator's validation scenario: running it drives
 # `seastar_rpc` -- a server, a client, and a stream between two shards -- over
 # the simulated network, and exits non-zero if anything misbehaves.
+#
+# It runs that scenario many times over: once under the engine's default
+# order, and then once per task under a policy which freezes that task and
+# lets the rest of the run go past it.  Each run is a different interleaving
+# of the same program, which is how the simulator finds order-dependent bugs
+# rather than merely reproducing one schedule.  See `src/simulator/main.cc`
+# for how to run it and what it currently reports.
 add_executable (seastar_simulator_link_test
   src/simulator/main.cc)
 

@@ -68,6 +68,7 @@
 #include <seastar/core/lowres_clock.hh>
 #include <seastar/core/metrics.hh>
 #include <seastar/core/metrics_registration.hh>
+#include <seastar/core/on_internal_error.hh>
 #include <seastar/core/preempt.hh>
 #include <seastar/core/scheduling.hh>
 #include <seastar/core/seastar.hh>
@@ -120,6 +121,23 @@ void unimplemented(const char* what = __builtin_FUNCTION()) {
 // The simulator's own logger, for the diagnostics the implementation itself
 // emits -- abandoned futures and the like.
 logger sim_logger("simulator");
+
+} // anonymous namespace
+
+// The logger the core headers reach for directly.  `shared_ptr`'s debug
+// helper, which sanitize builds enable, logs through it, so the simulator has
+// to define it just as the reactor does.
+logger seastar_logger("seastar");
+
+// The core's way of ending a run on an invariant violation.  The reactor
+// aborts here, and so does the simulator: a broken invariant is a bug in the
+// program under simulation, and continuing would only obscure it.
+void on_fatal_internal_error(logger& l, std::string_view reason) noexcept {
+    l.error("FATAL: {}", reason);
+    abort();
+}
+
+namespace {
 
 // Renders an exception for a log message.
 //
@@ -385,6 +403,21 @@ public:
     // every connection has a distinct local address, as on a real host.
     uint16_t _next_ephemeral_port = 40000;
 
+    // How many times each kind of work has been run, counted by `step()`.
+    // Reported at the end of `run()`; a deterministic run gives the same
+    // numbers every time, which makes them a cheap check that it still is.
+    uint64_t _tasks_run = 0;
+    uint64_t _smp_messages_run = 0;
+    uint64_t _network_messages_run = 0;
+    uint64_t _timers_run = 0;
+
+    // Decides which kind of work each step runs.  Never null: `run()` falls
+    // back to the default policy if none was installed.
+    scheduling_policy* _policy = nullptr;
+    // Scratch space for the pointers handed to `scheduling_policy::pick_task`,
+    // kept here so that a step does not allocate.
+    std::vector<task*> _task_view;
+
     // Set if the function passed to `run()` failed; rethrown from `run()`
     // once the simulation has quiesced.
     std::exception_ptr _run_exception;
@@ -458,57 +491,176 @@ void engine::impl::run_on(shard_id s, noncopyable_function<void ()> f) {
     }
 }
 
-bool engine::impl::step() {
+std::optional<work_kind> default_scheduling_policy::pick(const available_work& avail) {
     // Ready tasks first: the program's own work at the current instant takes
     // precedence over everything else.
-    if (!_run_queue.empty()) {
-        auto rt = _run_queue.front();
-        _run_queue.pop_front();
+    if (avail.tasks) {
+        return work_kind::task;
+    }
+    // Then cross-shard messages.  Delivering one turns it into work on the
+    // destination shard, which usually means new ready tasks.
+    if (avail.smp_messages) {
+        return work_kind::smp_message;
+    }
+    // Then the network's own messages.  A close only becomes visible to the
+    // reader once every task ready at this instant has run, so a reader is
+    // always given the chance to consume what was sent before it.
+    if (avail.network_messages) {
+        return work_kind::network_message;
+    }
+    // Only when the program has nothing left to do at this instant does time
+    // move, and then only as far as the earliest timer.  Everything else --
+    // tasks, cross-shard calls, network closes -- is handled above, so
+    // reaching here means the program is genuinely waiting on time.
+    if (avail.timers) {
+        return work_kind::timer;
+    }
+    return std::nullopt;
+}
+
+std::optional<work_kind> freezing_scheduling_policy::pick(const available_work& avail) {
+    if (_frozen_task) {
+        // The frozen task is the only one queued, so there is no task to run
+        // in its place; let everything else go first.
+        if (avail.task_count < 2) {
+            if (avail.smp_messages) {
+                return work_kind::smp_message;
+            }
+            if (avail.network_messages) {
+                return work_kind::network_message;
+            }
+            if (avail.timers) {
+                return work_kind::timer;
+            }
+            if (!avail.tasks) {
+                return std::nullopt;
+            }
+            // Nothing else is left anywhere: the run cannot go further
+            // without the frozen task, so release it.
+            _frozen_task = nullptr;
+        }
+        return work_kind::task;
+    }
+
+    if (avail.tasks) {
+        // The task about to run is the one to freeze.  It stays at the head
+        // of the queue; from here `pick_task` steps over it.
+        if (_tasks_seen == _freeze_index && !_froze) {
+            _froze = true;
+            // Which task it is, is settled by `pick_task` on this same step:
+            // the engine asks for the kind first and the task second, so the
+            // head of the queue now is the task being frozen.
+            _frozen_task = avail.next_task;
+            return pick(avail);
+        }
+        ++_tasks_seen;
+        return work_kind::task;
+    }
+
+    if (avail.smp_messages) {
+        return work_kind::smp_message;
+    }
+    if (avail.network_messages) {
+        return work_kind::network_message;
+    }
+    if (avail.timers) {
+        return work_kind::timer;
+    }
+    return std::nullopt;
+}
+
+size_t freezing_scheduling_policy::pick_task(std::span<task* const> queued) {
+    if (_frozen_task) {
+        // Run the oldest task which is not the frozen one.  It is normally at
+        // index 1, but `schedule_urgent()` can have put tasks in front of the
+        // frozen one since it was set aside.
+        for (size_t i = 0; i != queued.size(); ++i) {
+            if (queued[i] != _frozen_task) {
+                return i;
+            }
+        }
+        SEASTAR_ASSERT(false && "no task to run in place of the frozen one");
+    }
+    return 0;
+}
+
+bool engine::impl::step() {
+    available_work avail{
+        .task_count = _run_queue.size(),
+        .next_task = _run_queue.empty() ? nullptr : _run_queue.front().t,
+        .tasks = !_run_queue.empty(),
+        .smp_messages = !_smp_messages.empty(),
+        .network_messages = !_network_messages.empty(),
+        .timers = !_timers.empty(),
+    };
+    if (!avail.any()) {
+        return false;
+    }
+
+    // The policy makes the only choice there is; the engine knows how to
+    // carry it out.  A policy may also decline, which stops the run where it
+    // stands -- that is how a policy which holds work back ends a phase.
+    auto kind = _policy->pick(avail);
+    if (!kind) {
+        return false;
+    }
+
+    switch (*kind) {
+    case work_kind::task: {
+        SEASTAR_ASSERT(avail.tasks && "policy picked an unavailable work kind");
+        // The policy says which of the ready tasks to run; the default is the
+        // oldest, which keeps the run queue a queue.
+        // The policy identifies tasks by pointer, so hand it just the
+        // pointers, in queue order.
+        _task_view.clear();
+        _task_view.reserve(_run_queue.size());
+        for (auto& rt : _run_queue) {
+            _task_view.push_back(rt.t);
+        }
+        auto idx = _policy->pick_task(_task_view);
+        SEASTAR_ASSERT(idx < _run_queue.size() && "policy picked a task out of range");
+        auto rt = _run_queue[idx];
+        _run_queue.erase(_run_queue.begin() + idx);
+        ++_tasks_run;
         run_on(rt.shard, [t = rt.t] {
             t->run_and_dispose();
         });
         return true;
     }
-
-    // Then cross-shard messages.  Delivering one turns it into work on the
-    // destination shard, which usually means new ready tasks.
-    if (!_smp_messages.empty()) {
+    case work_kind::smp_message: {
+        SEASTAR_ASSERT(avail.smp_messages && "policy picked an unavailable work kind");
         auto msg = std::move(_smp_messages.front());
         _smp_messages.pop_front();
+        ++_smp_messages_run;
         run_on(msg.to, [&msg] {
             msg.deliver();
         });
         return true;
     }
-
-    // Then the network's own messages.  A close only becomes visible to the
-    // reader once every task ready at this instant has run, so a reader is
-    // always given the chance to consume what was sent before it.
-    if (!_network_messages.empty()) {
+    case work_kind::network_message: {
+        SEASTAR_ASSERT(avail.network_messages && "policy picked an unavailable work kind");
         auto msg = std::move(_network_messages.front());
         _network_messages.pop_front();
+        ++_network_messages_run;
         run_on(msg.to, [&msg] {
             msg.deliver();
         });
         return true;
     }
-
-    // Only when the program has nothing left to do at this instant does time
-    // move, and then only as far as the earliest timer.  Everything else --
-    // tasks, cross-shard calls, network closes -- is handled above, so
-    // reaching here means the program is genuinely waiting on time.
-    if (!_timers.empty()) {
+    case work_kind::timer: {
+        SEASTAR_ASSERT(avail.timers && "policy picked an unavailable work kind");
         auto it = _timers.begin();
         auto et = it->second;
         _timers.erase(it);
         _now = std::max(_now, et.expiry);
+        ++_timers_run;
         run_on(et.shard, [&et] {
             et.fire(et.timer);
         });
         return true;
     }
-
-    return false;
+    }
+    SEASTAR_ASSERT(false && "unknown work kind");
 }
 
 void engine::impl::run_to_quiescence() {
@@ -526,8 +678,28 @@ unsigned engine::shard_count() const noexcept {
     return _impl->_shard_count;
 }
 
+void engine::set_scheduling_policy(scheduling_policy* policy) noexcept {
+    _impl->_policy = policy;
+}
+
+engine::statistics engine::stats() const noexcept {
+    return statistics{
+        .tasks = _impl->_tasks_run,
+        .smp_messages = _impl->_smp_messages_run,
+        .network_messages = _impl->_network_messages_run,
+        .timers = _impl->_timers_run,
+    };
+}
+
 void engine::run(noncopyable_function<future<> ()> func) {
     auto& e = *_impl;
+
+    // No policy installed means the default one, which reproduces the fixed
+    // priority the engine had before policies existed.
+    default_scheduling_policy default_policy;
+    if (!e._policy) {
+        e._policy = &default_policy;
+    }
 
     // Start the shard threads.  Each one installs the engine and its own
     // shard id in its `thread_local`s -- which is what makes it a shard --

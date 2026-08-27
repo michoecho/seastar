@@ -52,6 +52,92 @@
 // which the engine cannot allow: only one shard runs at a time, so a blocked
 // shard would stop the engine that is supposed to resolve the future.
 //
+//
+// Running it
+// ----------
+//
+//   ninja -C build/dev seastar_simulator_link_test
+//   ./build/dev/seastar_simulator_link_test
+//
+// It runs the scenario once under the engine's default order -- the
+// `baseline` line -- and then once per task under
+// `freezing_scheduling_policy`, which sets that one task aside, runs
+// everything else as far as it will go, and only then lets the frozen task
+// run.  Each of those is a different interleaving of the same program.  Only
+// the failures are printed, and the exit status is non-zero if there were
+// any.
+//
+// Every run is deterministic and the whole sweep is reproducible: the engine
+// makes every scheduling choice itself, so the same binary prints the same
+// output every time.  A change in the numbers is a change in behaviour, not
+// in the weather.
+//
+//
+// The bugs it currently exposes
+// -----------------------------
+//
+// The scenario passes under the default order and fails under some of the
+// interleavings.  Both bugs are in this file -- in the scenario, not in the
+// simulator or in RPC -- and both are left unfixed on purpose, because they
+// are what demonstrates that the sweep works.
+//
+// 1. A stream teardown race, which the sweep reports directly:
+//
+//        ./build/dev/seastar_simulator_link_test
+//        ...
+//        freeze task 59: ... -- FAILED: rpc stream was closed by peer
+//        sweep finished: 152 interleavings, 6 failed
+//
+//    `run_client()` reads the stream in a background fiber while the
+//    foreground closes the sink.  The fiber is supposed to see the server
+//    close its end first; freezing a task at the wrong moment lets
+//    `sink.close()` tear the connection down before the fiber's second
+//    `source()` resolves, so it gets an aborted queue instead of a clean end
+//    of stream.  The comment above that fiber already notes the hazard.
+//
+// 2. A use-after-free in teardown, which needs valgrind to see -- it corrupts
+//    memory without failing the run, and on different interleavings than the
+//    ones above:
+//
+//        valgrind ./build/dev/seastar_simulator_link_test
+//        ...
+//        ==*== Invalid read of size 8
+//        ==*==    at ... std::_Hashtable<seastar::rpc::connection_id, ...>::erase
+//        ==*==    by ... seastar::rpc::server::connection::process
+//        ==*==  Address ... is 192 bytes inside a block of size 400 free'd
+//        ==*==    at ... operator delete
+//        ==*==    by ... stop_server
+//        ==*== ERROR SUMMARY: 25 errors from 5 contexts
+//
+//    `stop_server()` below does `shutdown()`, `stop()`, then `delete
+//    g_server`.  On some interleavings an `rpc::server::connection::process`
+//    fiber is still live at that point and reads the server's connection
+//    table after it has been freed.  The baseline run is clean under
+//    valgrind; only the frozen interleavings reach it.
+//
+// Note that the two sets of interleavings are disjoint: the runs which
+// corrupt memory are not the ones which fail loudly.  That is the argument
+// for running the sweep under valgrind rather than trusting the exit status.
+//
+//
+// Sanitizers
+// ----------
+//
+// The sanitize build links but cannot run this yet:
+//
+//   ninja -C build/sanitize seastar_simulator_link_test
+//   ./build/sanitize/seastar_simulator_link_test
+//   ... ERROR seastar - FATAL: shared_ptr accessed on non-owner cpu
+//
+// `SEASTAR_DEBUG_SHARED_PTR`, which sanitize mode enables, checks a
+// `shared_ptr`'s refcount against the `std::thread::id` which created it.
+// The simulator gives each shard a thread of its own -- for its
+// `thread_local` storage, not for parallelism -- so a `shared_ptr` moved
+// between shards trips the check even though the shards never run at the same
+// time and the access is safe.  Making sanitize mode usable here means either
+// building it without that check or teaching the check about shards; until
+// then, valgrind is what covers this scenario.
+//
 
 #include "engine.hh"
 
@@ -62,9 +148,11 @@
 #include <seastar/rpc/rpc.hh>
 #include <seastar/util/log.hh>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <string>
 
 using namespace seastar;
 
@@ -358,22 +446,88 @@ future<> scenario() {
     test_logger.info("scenario finished");
 }
 
+// The outcome of one run: what the engine did, or why the scenario failed.
+struct run_result {
+    simulator::engine::statistics stats;
+    // Empty if the scenario succeeded.
+    std::string failure;
+};
+
+// Runs the scenario once, under `policy`.
+//
+// Each run gets its own engine: an engine's state is the simulated program's
+// state, so replaying the scenario under a different policy means starting
+// from nothing.  A failure is returned rather than thrown, so that one bad
+// interleaving does not hide the ones after it.
+run_result run_once(simulator::scheduling_policy& policy) {
+    run_result r;
+    simulator::engine engine(4);
+    engine.set_scheduling_policy(&policy);
+    try {
+        engine.run(scenario);
+    } catch (const std::exception& e) {
+        r.failure = e.what();
+    } catch (...) {
+        r.failure = "unknown exception";
+    }
+    r.stats = engine.stats();
+    return r;
+}
+
+void report(const char* what, const run_result& r) {
+    // Printed rather than logged: `run()` has returned, so there is no longer
+    // an engine for the logger to ask which shard it is on.
+    std::fprintf(stderr,
+            "%s: %llu things: %llu tasks, %llu cross-shard calls, "
+            "%llu network events, %llu timers%s%s\n",
+            what,
+            (unsigned long long) r.stats.total(),
+            (unsigned long long) r.stats.tasks,
+            (unsigned long long) r.stats.smp_messages,
+            (unsigned long long) r.stats.network_messages,
+            (unsigned long long) r.stats.timers,
+            r.failure.empty() ? "" : " -- FAILED: ",
+            r.failure.c_str());
+}
+
 } // anonymous namespace
 
 int main() {
-    try {
-        simulator::engine engine(4);
-        engine.run(scenario);
-    } catch (...) {
-        std::fprintf(stderr, "scenario failed: ");
-        try {
-            throw;
-        } catch (const std::exception& e) {
-            std::fprintf(stderr, "%s\n", e.what());
-        } catch (...) {
-            std::fprintf(stderr, "unknown exception\n");
-        }
+    // The baseline: the scenario under the engine's default order.
+    simulator::default_scheduling_policy default_policy;
+    auto baseline = run_once(default_policy);
+    report("baseline", baseline);
+    if (!baseline.failure.empty()) {
+        std::fprintf(stderr, "the scenario fails under the default order; "
+                "not sweeping\n");
         return 1;
     }
-    return 0;
+
+    // Then the sweep: freeze the i-th task, for every i, until i is past the
+    // end of the run and there is no i-th task left to freeze.  Each
+    // iteration is a different interleaving of the same program, and each is
+    // expected to reach the same end.
+    uint64_t failures = 0;
+    uint64_t runs = 0;
+    for (uint64_t i = 0; ; ++i) {
+        simulator::freezing_scheduling_policy policy(i);
+        auto r = run_once(policy);
+        if (!policy.froze()) {
+            // The run had no i-th task, so this run was the baseline and
+            // every larger i would be too.
+            break;
+        }
+        ++runs;
+        char label[64];
+        std::snprintf(label, sizeof(label), "freeze task %llu",
+                (unsigned long long) i);
+        if (!r.failure.empty()) {
+            ++failures;
+            report(label, r);
+        }
+    }
+
+    std::fprintf(stderr, "sweep finished: %llu interleavings, %llu failed\n",
+            (unsigned long long) runs, (unsigned long long) failures);
+    return failures ? 1 : 0;
 }
