@@ -73,51 +73,37 @@
 // in the weather.
 //
 //
-// The bugs it currently exposes
-// -----------------------------
+// The bugs it exposed
+// -------------------
 //
-// The scenario passes under the default order and fails under some of the
-// interleavings.  Both bugs are in this file -- in the scenario, not in the
-// simulator or in RPC -- and both are left unfixed on purpose, because they
-// are what demonstrates that the sweep works.
+// The sweep is expected to be clean: every interleaving reaches the same end
+// as the default order, and `sweep finished: ... 0 failed` is the pass
+// condition.  It found two bugs when it was written, both since fixed, and
+// both of which the default order alone never reached:
 //
-// 1. A stream teardown race, which the sweep reports directly:
+// 1. A stream teardown race, reported by the sweep itself as
+//    `rpc::stream_closed` out of the client's reader on six of the
+//    interleavings.  When a peer closed its end of a stream, the reading
+//    side's connection saw the socket end and aborted its stream queue --
+//    discarding the end-of-stream marker the peer had just sent, if the
+//    reader had not taken it yet.  Fixed in `connection::process()`, which
+//    now only aborts on a real connection error and pushes an end-of-stream
+//    marker on a clean close.
 //
-//        ./build/dev/seastar_simulator_link_test
-//        ...
-//        freeze task 59: ... -- FAILED: rpc stream was closed by peer
-//        sweep finished: 152 interleavings, 6 failed
-//
-//    `run_client()` reads the stream in a background fiber while the
-//    foreground closes the sink.  The fiber is supposed to see the server
-//    close its end first; freezing a task at the wrong moment lets
-//    `sink.close()` tear the connection down before the fiber's second
-//    `source()` resolves, so it gets an aborted queue instead of a clean end
-//    of stream.  The comment above that fiber already notes the hazard.
-//
-// 2. A use-after-free in teardown, which needs valgrind to see -- it corrupts
-//    memory without failing the run, and on different interleavings than the
-//    ones above:
+// 2. A use-after-free in server teardown, which corrupted memory without
+//    failing the run -- and on a different set of interleavings than the
+//    failures above, which is the argument for running the sweep under
+//    valgrind rather than trusting the exit status:
 //
 //        valgrind ./build/dev/seastar_simulator_link_test
-//        ...
-//        ==*== Invalid read of size 8
-//        ==*==    at ... std::_Hashtable<seastar::rpc::connection_id, ...>::erase
-//        ==*==    by ... seastar::rpc::server::connection::process
-//        ==*==  Address ... is 192 bytes inside a block of size 400 free'd
-//        ==*==    at ... operator delete
-//        ==*==    by ... stop_server
-//        ==*== ERROR SUMMARY: 25 errors from 5 contexts
 //
-//    `stop_server()` below does `shutdown()`, `stop()`, then `delete
-//    g_server`.  On some interleavings an `rpc::server::connection::process`
-//    fiber is still live at that point and reads the server's connection
-//    table after it has been freed.  The baseline run is clean under
-//    valgrind; only the frozen interleavings reach it.
-//
-// Note that the two sets of interleavings are disjoint: the runs which
-// corrupt memory are not the ones which fail loudly.  That is the argument
-// for running the sweep under valgrind rather than trusting the exit status.
+//    `server::shutdown()` waited for the connections in the server's `_conns`,
+//    but a stream connection removes itself from `_conns` during negotiation,
+//    and its cleanup reaches back into the server after hopping to the parent
+//    connection's shard.  A server destroyed once `shutdown()` resolved --
+//    which `stop_server()` below does -- could be freed underneath it.  Fixed
+//    by having the server hold a gate across every connection's `process()`
+//    and close it in `shutdown()`.
 //
 //
 // Sanitizers

@@ -1044,8 +1044,25 @@ future<> client::loop(client_options ops, const socket_address& addr, const sock
             }
         }
     }
-    if (is_stream() && (ep || _error)) {
-        _stream_queue.abort(std::make_exception_ptr(stream_closed()));
+    if (is_stream()) {
+        if (ep) {
+            // The connection failed.  Whatever is queued is not going to be
+            // completed by an end-of-stream marker, so wake the reader with
+            // the error instead.
+            _stream_queue.abort(std::make_exception_ptr(stream_closed()));
+        } else if (_error) {
+            // The peer closed its end cleanly.  `_error` here only means the
+            // read loop saw the socket end, which happens as soon as the peer
+            // closes its write side -- possibly before the reader has taken
+            // the end-of-stream marker the peer sent just before it.  Aborting
+            // the queue would discard that marker and turn a clean end of
+            // stream into `stream_closed`, so push a marker instead: a reader
+            // which has not reached the end yet sees it and stops, and one
+            // which already has is unaffected.
+            if (!_stream_queue.full()) {
+                _stream_queue.push(rcv_buf(-1U));
+            }
+        }
     }
     _error = true;
     future<> f = co_await coroutine::as_future(stop_send_loop(ep));
