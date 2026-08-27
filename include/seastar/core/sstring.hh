@@ -33,6 +33,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <istream>
+#include <optional>
 #include <ostream>
 #include <functional>
 #include <type_traits>
@@ -859,6 +860,17 @@ std::ostream& operator<<(std::ostream& os, const std::unordered_map<Key, T, Hash
 template <typename char_type, typename Size, Size max_size, bool NulTerminate>
 struct fmt::range_format_kind<seastar::basic_sstring<char_type, Size, max_size, NulTerminate>, char_type> : std::integral_constant<fmt::range_format, fmt::range_format::disabled>
 {};
+
+// Since P3168, std::optional models a range in C++26. fmt <= 11.2.0 is unaware of
+// its own std::optional formatter in <fmt/std.h> and additionally tries to format
+// std::optional as a sequence range, leaving the two formatter specializations
+// ambiguous and std::optional<T> reported as unformattable. Disable range
+// formatting for std::optional to match the fix later made upstream in fmt.
+#if defined(__cpp_lib_optional) && __cpp_lib_optional >= 202506L && FMT_VERSION <= 110200
+template <typename T, typename char_type>
+struct fmt::range_format_kind<std::optional<T>, char_type> : std::integral_constant<fmt::range_format, fmt::range_format::disabled>
+{};
+#endif
 
 #endif
 
