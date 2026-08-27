@@ -1087,7 +1087,8 @@ void deliver(pipe& p, temporary_buffer<char> buf) {
     p.data.push_back(std::move(buf));
 }
 
-// Closes the writing end of `p`, so that the reader eventually sees EOF.
+// Closes the writing end of one of `conn`'s pipes, so that the reader
+// eventually sees EOF.
 //
 // The close is queued rather than applied here.  Everything already written
 // is ahead of it in the reader's view of the connection, and the reader has
@@ -1096,7 +1097,17 @@ void deliver(pipe& p, temporary_buffer<char> buf) {
 // the close where the writer stands would instead let a reader whose
 // continuation had not run yet find the pipe already shut, and read a stream
 // that was truncated by nothing but scheduling order.
-void close_pipe(pipe& p) {
+//
+// Because the close outlives the call, the pipe has to as well.  The pipe is
+// a member of the connection, so what the queued message carries is a
+// reference to the connection -- not to the pipe -- which keeps the whole
+// thing alive until the close is delivered.  Taking the pipe by reference
+// would leave the message pointing into a freed connection if the last socket
+// on it were dropped in the meantime, which is a thing a program may do: a
+// close is queued by `shutdown()`, and nothing obliges the caller to hold the
+// socket until the engine gets round to the message.
+void close_pipe(lw_shared_ptr<connection> conn, pipe connection::* which) {
+    pipe& p = (*conn).*which;
     if (p.closing) {
         return;  // already closed, or a close is already on its way
     }
@@ -1104,7 +1115,9 @@ void close_pipe(pipe& p) {
     auto& e = simulator::eng();
     // The close is delivered on whichever shard the reader is parked on, if
     // one is, since waking it means touching its promise.
-    e._network_messages.push_back({p.waiter ? p.waiter_shard : this_shard_id(), [&p] {
+    e._network_messages.push_back({p.waiter ? p.waiter_shard : this_shard_id(),
+            [conn = std::move(conn), which] {
+        pipe& p = (*conn).*which;
         p.closed = true;
         if (p.waiter) {
             // Wake the parked reader with EOF, which is how Seastar spells
@@ -1185,7 +1198,7 @@ public:
     }
 
     virtual future<> close() override {
-        close_pipe((*_conn).*_out);
+        close_pipe(_conn, _out);
         return make_ready_future<>();
     }
 
@@ -1224,11 +1237,11 @@ public:
     }
 
     virtual void shutdown_input() override {
-        close_pipe((*_conn).*in_pipe());
+        close_pipe(_conn, in_pipe());
     }
 
     virtual void shutdown_output() override {
-        close_pipe((*_conn).*out_pipe());
+        close_pipe(_conn, out_pipe());
     }
 
     // The simulated network has no congestion control and no keepalives, so
@@ -1344,8 +1357,8 @@ public:
         if (_conn) {
             // Terminate the connection in both directions, as shutting a
             // real socket down would.
-            close_pipe(_conn->client_to_server);
-            close_pipe(_conn->server_to_client);
+            close_pipe(_conn, &connection::client_to_server);
+            close_pipe(_conn, &connection::server_to_client);
         }
     }
 };
