@@ -711,6 +711,14 @@ private:
     resource_limits _limits;
     rpc_semaphore _resources_available;
     std::unordered_map<connection_id, shared_ptr<connection>> _conns;
+    // Held by every connection for the whole of its process() loop, including
+    // the cleanup which runs after the loop ends.
+    //
+    // _conns alone is not enough to wait for connections on shutdown: a stream
+    // connection removes itself from it during negotiation, so from then on
+    // nothing else tracks it, and its cleanup -- which hops to the parent's
+    // shard and comes back to touch this server -- could outlive the server.
+    gate _connections_gate;
     promise<> _ss_stopped;
     gate _reply_gate;
     server_options _options;
@@ -738,6 +746,12 @@ public:
      * by remote clients, i.e. -- no new rpcs are admitted and no replies on the
      * previously running handlers will be sent. Currently running handlers may
      * still run.
+     *
+     * Once it resolves no connection is still touching the server, so it is
+     * safe to destroy the server afterwards. This includes stream connections,
+     * which are not in the server's connection list -- a stream connection
+     * removes itself from it during negotiation -- and whose cleanup hops to
+     * the parent connection's shard and back before it is done.
      *
      * Caller of shutdown() mush wait for it to resolve before calling stop.
      */

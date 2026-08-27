@@ -1360,8 +1360,12 @@ void server::accept() {
             auto conn = _proto.make_server_connection(*this, std::move(fd), std::move(addr), id);
             auto r = _conns.emplace(id, conn);
             SEASTAR_ASSERT(r.second);
-            // Process asynchronously in background.
-            (void)conn->process();
+            // Process asynchronously in background.  The gate is held for the
+            // whole of process(), so that shutdown() waits for connections
+            // which _conns no longer tracks -- a stream connection removes
+            // itself from _conns during negotiation, but its cleanup still
+            // reaches back into this server.
+            (void)conn->process().finally([h = _connections_gate.hold()] {});
         });
     }).then_wrapped([this] (future<>&& f){
         try {
@@ -1387,6 +1391,14 @@ future<> server::shutdown() {
         return parallel_for_each(_conns | std::views::values, [] (shared_ptr<connection> conn) {
             return conn->stop();
         });
+    }).then([this] {
+        // Stopping everything in _conns is not the same as waiting for it.  A
+        // stream connection is not in _conns -- it takes itself out during
+        // negotiation -- and its cleanup outlives the loop above: it hops to
+        // the parent connection's shard to deregister itself, and touches this
+        // server again when it comes back.  The gate is what waits for that,
+        // so that a server may be destroyed once shutdown() resolves.
+        return _connections_gate.close();
     }).finally([this] {
         _shutdown = true;
     });
