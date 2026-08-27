@@ -30,6 +30,8 @@
 #include <seastar/util/is_smart_ptr.hh>
 #include <seastar/util/log.hh>
 #include <seastar/core/deleter.hh>
+#include <seastar/rpc/rpc.hh>
+#include <seastar/rpc/rpc_types.hh>
 
 #include <boost/type.hpp> // for compatibility
 
