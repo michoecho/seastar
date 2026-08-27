@@ -1378,6 +1378,88 @@ if (Seastar_MODULE)
 endif ()
 
 #
+# The `seastar-simulator` library.
+#
+# An alternative implementation of the non-core half of Seastar, intended to
+# grow into a deterministic simulator which can drive Seastar code under test
+# without a reactor.  It stands in for `seastar`: it defines the declarations
+# which `seastar-core` leaves open, so that a consumer compiled against
+# `seastar-core` alone -- currently `seastar_rpc` -- can be linked against it
+# instead of against the real implementation.
+#
+# It is a skeleton at this point.  Every definition aborts; what the library
+# provides so far is the boundary itself, and the guarantee (enforced by
+# `seastar_simulator_link_test` below) that the boundary is complete.
+#
+
+add_library (seastar-simulator
+  src/simulator/simulator.cc)
+
+add_library (Seastar::seastar-simulator ALIAS seastar-simulator)
+
+target_compile_definitions (seastar-simulator
+  PRIVATE ${Seastar_PRIVATE_COMPILE_DEFINITIONS})
+
+target_compile_options (seastar-simulator
+  PRIVATE ${Seastar_PRIVATE_CXX_FLAGS})
+
+target_link_libraries (seastar-simulator
+  PUBLIC
+    seastar-core)
+
+target_compile_features (seastar-simulator
+  PUBLIC cxx_std_${CMAKE_CXX_STANDARD})
+
+set_target_properties (seastar-simulator
+  PROPERTIES
+    CXX_STANDARD ${CMAKE_CXX_STANDARD}
+    CXX_EXTENSIONS ON)
+
+# Linking a shared library does not resolve its undefined symbols, so the
+# simulator being complete is only really tested by linking a program.  This
+# executable pulls in the whole of `seastar_rpc` and forbids undefined
+# symbols, which makes the build fail as soon as RPC starts referring to
+# something the simulator has not defined yet.  It is not meant to be run.
+add_executable (seastar_simulator_link_test
+  src/simulator/main.cc)
+
+target_compile_definitions (seastar_simulator_link_test
+  PRIVATE ${Seastar_PRIVATE_COMPILE_DEFINITIONS})
+
+target_compile_options (seastar_simulator_link_test
+  PRIVATE ${Seastar_PRIVATE_CXX_FLAGS})
+
+target_link_libraries (seastar_simulator_link_test
+  PRIVATE
+    -Wl,--no-undefined
+    -Wl,--push-state,--no-as-needed
+    seastar_rpc
+    seastar-simulator
+    -Wl,--pop-state)
+
+set_target_properties (seastar_simulator_link_test
+  PROPERTIES
+    CXX_STANDARD ${CMAKE_CXX_STANDARD}
+    CXX_EXTENSIONS ON)
+
+# `--no-undefined` constrains the executable's own objects, but the libraries
+# it pulls in are shared, so their undefined symbols are only resolved when
+# the program is loaded.  Resolve them eagerly after the link, which is what
+# actually establishes that `seastar_rpc` needs nothing beyond
+# `seastar-core` + `seastar-simulator`.
+find_program (Seastar_LDD_COMMAND ldd)
+
+if (Seastar_LDD_COMMAND)
+  add_custom_command (TARGET seastar_simulator_link_test
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+      -DEXECUTABLE=$<TARGET_FILE:seastar_simulator_link_test>
+      -DLDD=${Seastar_LDD_COMMAND}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckNoUndefinedSymbols.cmake
+    VERBATIM)
+endif ()
+
+#
 # The testing library.
 #
 
