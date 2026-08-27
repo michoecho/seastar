@@ -28,15 +28,24 @@
 // This runs `seastar_rpc`, unmodified, over the simulated network:
 //
 //   - four shards;
-//   - shard 0 listens on an address and serves an RPC verb;
+//   - shards 0 and 1 both listen on one address and serve an RPC verb;
 //   - shard 2 connects to it and opens an RPC stream;
 //   - shard 2 sends a message on the stream and reads the response;
 //   - both ends close the stream and the connection.
 //
 // Everything it exercises is a piece of the simulator: cross-shard calls
-// (shard 2 talks to a listener registered by shard 0), the simulated network
-// (connect, accept, read, write, shutdown), the run queue (every continuation
-// RPC creates), and the futures underneath all of it.
+// (shard 2 talks to a listener registered by shards 0 and 1), the simulated
+// network (listen, connect, accept, read, write, shutdown), the run queue
+// (every continuation RPC creates), and the futures underneath all of it.
+//
+// Two listening shards rather than one is deliberate.  RPC streams are built
+// to be used from a shard other than the one which owns the stream's
+// connection, through `foreign_ptr` and a `batched_queue` per direction; when
+// one shard owns both the connection and the stream, all of that collapses
+// into direct calls and goes untested.  Listening on two shards puts the
+// client's two connections -- the RPC connection and the stream's own -- on
+// different server shards, which is how a real sharded server reaches that
+// state.  See `run_client()` below for what it sets in motion.
 //
 // The scenario is written with coroutines rather than `seastar::async`.
 // A Seastar thread would have to block a shard thread inside `future::get()`,
@@ -47,6 +56,7 @@
 #include "engine.hh"
 
 #include <seastar/core/coroutine.hh>
+#include <seastar/core/loop.hh>
 #include <seastar/core/smp.hh>
 #include <seastar/net/api.hh>
 #include <seastar/rpc/rpc.hh>
@@ -117,15 +127,24 @@ using test_protocol = rpc::protocol<serializer>;
 // call carries a sink one way and returns a source the other.
 constexpr uint32_t echo_verb = 1;
 
-// Everything shard 0 -- the server -- owns.
+// The shards the server listens on.
 //
-// It lives for the whole run and is reached from shard 0 only, so a plain
+// Both are in the same streaming domain and share the listening address, so
+// a connection to it lands on one of them and the next lands on the other.
+// Two are enough to put a stream's connection on a different shard from its
+// parent, which is the point.
+constexpr shard_id server_shards[] = {0, 1};
+
+// Everything one server shard owns.
+//
+// Each listening shard has its own, reached from that shard only, so a plain
 // pointer in a `thread_local` is enough; nothing else ever touches it.
 struct server_state {
     test_protocol proto{serializer()};
     std::unique_ptr<test_protocol::server> server;
-    // The stream work the verb handler started, which has to finish before
-    // the run is over.
+    // The stream work a verb handler started, which has to finish before the
+    // run is over.  Only the shard which accepted the parent connection runs
+    // a handler, so at most one of these is ever non-trivial.
     future<> stream_done = make_ready_future<>();
 };
 
@@ -142,17 +161,34 @@ void check(bool ok, const char* what) {
 
 // Brings up the server on this shard.
 //
-// The listener is registered in the engine here, which is what makes the
-// address reachable: a client connecting to it will find this entry, and
-// nothing else.
+// Every shard in `server_shards` runs this, and each registers itself in the
+// engine's listener table for the same address.  That is what a sharded
+// Seastar server does on a real host too: every shard listens on the address
+// with `reuse_address`, and the connections arriving at it are spread over
+// the shards which did.
 future<> start_server() {
-    test_logger.info("starting server on port {}", server_port);
+    test_logger.info("server: listening on port {}", server_port);
     g_server = new server_state();
     g_server->proto.set_logger(&rpc_logger);
     g_server->proto.register_handler(echo_verb,
             [] (int32_t token, rpc::source<sstring> source) {
+        // This runs on the shard which accepted the *parent* connection.
+        // The stream's own connection was accepted elsewhere and registered
+        // here as a `foreign_ptr`, so `source` and the sink made from it
+        // reach it across shards.
         test_logger.info("server: stream opened with token {}", token);
         check(token == 666, "server received the expected token");
+
+        // The whole point of the scenario: the stream's connection was
+        // accepted on a shard other than this one, and reaches this handler
+        // as a `foreign_ptr`.  `source::get_id()` is the stream connection's
+        // id, whose shard field is the shard which accepted it -- for a
+        // stream connection that really is the owner shard, since the id is
+        // stamped by `server::accept()` on the accepting shard.
+        test_logger.info("server: handler is on shard {}, the stream's connection on shard {}",
+                this_shard_id(), source.get_id().shard());
+        check(source.get_id().shard() != this_shard_id(),
+                "the stream's connection is owned by another shard");
 
         // The reply end of the stream.  The handler returns it, and RPC
         // delivers it to the caller as a source.
@@ -179,18 +215,28 @@ future<> start_server() {
 
     // Streams need a streaming domain: a stream is carried by a second
     // connection, and the domain is how RPC finds the server that the first
-    // connection belongs to when the stream's call arrives.
+    // connection belongs to when the stream's call arrives.  Here that
+    // lookup is what crosses shards -- the domain is registered per shard,
+    // and the stream's shard looks the parent's up on the parent's shard.
     rpc::server_options opts;
     opts.streaming_domain = rpc::streaming_domain_type(1);
 
+    // The listening socket is made here rather than by `rpc::server`, because
+    // it needs `reuse_address`: several shards listen on this one address.
+    // The default load balancing algorithm spreads arriving connections over
+    // them in turn, which is what puts the parent connection and the stream
+    // connection on different shards.
+    listen_options lo;
+    lo.reuse_address = true;
+
     g_server->server = std::make_unique<test_protocol::server>(g_server->proto,
-            opts, socket_address(uint32_t(INADDR_LOOPBACK), server_port));
+            opts, seastar::listen(socket_address(uint32_t(INADDR_LOOPBACK), server_port), lo));
     return make_ready_future<>();
 }
 
-// Shuts the server down and waits for everything it started.
+// Shuts this shard's server down and waits for everything it started.
 future<> stop_server() {
-    test_logger.info("stopping server");
+    test_logger.info("server: stopping");
     co_await std::move(g_server->stream_done);
     co_await g_server->server->shutdown();
     co_await g_server->server->stop();
@@ -199,6 +245,41 @@ future<> stop_server() {
 }
 
 // The client half of the scenario, run on shard 2.
+//
+// The client is deliberately ordinary: one shard opens a connection, opens a
+// stream on it, and uses it.  Nothing here is aware of shards at all.  The
+// cross-shard machinery this scenario exercises is entirely on the server
+// side, and is reached by the two connections the client makes landing on
+// different server shards:
+//
+//   - the first connection is the RPC connection, accepted on one shard;
+//
+//   - the second is the stream's own connection.  It carries a STREAM_PARENT
+//     feature naming the first connection, and the shard which accepts it
+//     hands itself to the parent's shard with `smp::submit_to()`, where it is
+//     registered as a `foreign_ptr` in the parent's `_streams` map.
+//
+// From then on the server's `sink` and `source` -- which live on the parent's
+// shard, because that is where the verb handler runs -- reach the stream's
+// connection through an `xshard_connection_ptr` and route every operation to
+// `_con->get_owner_shard()`, which is the other shard.  So on the server:
+//
+//   - `sink_impl::_send_queue` is a `batched_queue` targeting the stream
+//     connection's shard, so each echo enqueues a buffer which is batched and
+//     handed to that shard to write;
+//
+//   - `send_buffer()`, running there, copies the buffer into a shard-local
+//     one and hands the original back through `_delete_queue`, so it is freed
+//     on the shard which allocated it;
+//
+//   - `source_impl::operator()` refills its buffers with `smp::submit_to()`
+//     and copies each `rcv_buf` out of the foreign shard's memory;
+//
+//   - `sink_impl::close()` drains `_send_queue`, then hops to the stream's
+//     shard to drain `_delete_queue` and write the end-of-stream frame.
+//
+// None of that is reached when a single shard owns both connections, which is
+// why the server listens on two.
 future<> run_client() {
     auto addr = socket_address(uint32_t(INADDR_LOOPBACK), server_port);
 
@@ -207,8 +288,9 @@ future<> run_client() {
     proto.set_logger(&rpc_logger);
     test_protocol::client client(proto, addr);
 
-    // Opening a stream takes a second connection to the same server, which
-    // is why this needs a socket of its own.
+    // Opening a stream takes a second connection to the same server, which is
+    // why this needs a socket of its own -- and which is what lands on a
+    // different server shard than the connection above.
     test_logger.info("client: opening a stream");
     auto sink = co_await client.make_stream_sink<serializer, sstring>(make_socket());
 
@@ -255,7 +337,12 @@ future<> run_client() {
 future<> scenario() {
     test_logger.info("running on {} shards", this_smp_shard_count());
 
-    co_await start_server();
+    // Bring the server up on every shard which listens.  Each registers
+    // itself for the same address, and the engine spreads the connections
+    // arriving at it over them.
+    co_await parallel_for_each(server_shards, [] (shard_id s) {
+        return smp::submit_to(s, [] { return start_server(); });
+    });
 
     // The client runs on shard 2, so getting it there and getting its result
     // back is itself a cross-shard call.
@@ -264,7 +351,9 @@ future<> scenario() {
         return run_client();
     });
 
-    co_await stop_server();
+    co_await parallel_for_each(server_shards, [] (shard_id s) {
+        return smp::submit_to(s, [] { return stop_server(); });
+    });
 
     test_logger.info("scenario finished");
 }

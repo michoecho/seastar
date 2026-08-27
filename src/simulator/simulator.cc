@@ -88,6 +88,7 @@
 
 #include <arpa/inet.h>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -199,19 +200,97 @@ struct connection {
     socket_address server_address;
 };
 
-// A server socket registered by `listen()`.
+// A server socket registered by `listen()`, on one shard.
+//
+// Several shards may listen on the same address -- that is what
+// `reuse_address` is for, and how a sharded server is built -- so each gets a
+// queue of its own here.  An arriving connection is steered to exactly one of
+// them, and only that shard ever sees it.
+struct listener_shard {
+    // Connections which have arrived on this shard but have not been
+    // accepted yet.
+    std::deque<lw_shared_ptr<connection>> backlog;
+    // Set while this shard's `accept()` is parked waiting for a connection.
+    std::optional<promise<accept_result>> waiter;
+    // Whether a `server_socket` for this shard still exists.  A shard whose
+    // socket has been aborted is no longer a candidate for new connections,
+    // but the entry stays until every shard is gone, so that the remaining
+    // shards keep their queues.
+    bool aborted = false;
+};
+
+// Everything listening on one address.
 //
 // Connecting clients only ever see what is in this table: `connect()` looks
 // the destination address up here, and fails with ECONNREFUSED if nothing has
 // been registered for it.  There is no host network involved at any point.
+//
+// This is the simulator's stand-in for a listening socket shared by every
+// shard.  On a real host that sharing is done by the kernel (`SO_REUSEPORT`)
+// or by the native stack, which steer each incoming connection to one shard;
+// here the engine does the steering itself, by the same
+// `load_balancing_algorithm` the caller asked for, so that which shard
+// accepts a connection is a property of the connection rather than of who
+// happened to call `accept()` first.
 struct listener {
     socket_address address;
-    // Connections which have arrived but have not been accepted yet.
-    std::deque<lw_shared_ptr<connection>> backlog;
-    // Set while `accept()` is parked waiting for a connection.
-    std::optional<promise<accept_result>> waiter;
-    shard_id waiter_shard = 0;
-    bool aborted = false;
+    // Indexed by shard id; empty for a shard which never called `listen()`.
+    std::vector<std::optional<listener_shard>> shards;
+    // How arriving connections are spread over the listening shards, and the
+    // shard to use when that algorithm is `fixed`.  Taken from the first
+    // `listen()` for this address; the later ones share it.
+    server_socket::load_balancing_algorithm lba =
+            server_socket::load_balancing_algorithm::default_;
+    unsigned fixed_cpu = 0;
+    // Connections steered so far, which `connection_distribution` counts to
+    // decide where the next one goes.
+    uint64_t accepted = 0;
+
+    // The shards which could accept a connection right now.
+    std::vector<shard_id> open_shards() const {
+        std::vector<shard_id> ret;
+        for (shard_id i = 0; i < shards.size(); ++i) {
+            if (shards[i] && !shards[i]->aborted) {
+                ret.push_back(i);
+            }
+        }
+        return ret;
+    }
+
+    // Whether any shard is still listening.  The entry is dropped from the
+    // engine's table once none is.
+    bool any_open() const {
+        return std::ranges::any_of(shards, [] (const std::optional<listener_shard>& s) {
+            return s && !s->aborted;
+        });
+    }
+
+    // Picks the shard which will accept a connection from `client_address`.
+    //
+    // This is the load balancing algorithm, applied to the shards which are
+    // actually listening.  `connection_distribution` is meant to send a
+    // connection to the least loaded shard; since a simulated connection
+    // carries no load, round-robin over the listening shards is the same
+    // thing and is deterministic, which matters more.
+    shard_id pick_shard(const socket_address& client_address) {
+        auto open = open_shards();
+        SEASTAR_ASSERT(!open.empty());
+        switch (lba) {
+        case server_socket::load_balancing_algorithm::fixed:
+            // The caller named a shard.  If it is not listening the
+            // connection has nowhere to go, which is a bug in the caller
+            // rather than something to paper over.
+            SEASTAR_ASSERT(fixed_cpu < shards.size() && shards[fixed_cpu]
+                    && !shards[fixed_cpu]->aborted
+                    && "fixed_cpu shard is not listening");
+            return fixed_cpu;
+        case server_socket::load_balancing_algorithm::port:
+            return open[client_address.port() % open.size()];
+        case server_socket::load_balancing_algorithm::connection_distribution:
+            return open[accepted++ % open.size()];
+        }
+        SEASTAR_ASSERT(false && "unknown load balancing algorithm");
+    }
 };
 
 } // anonymous namespace
@@ -1204,7 +1283,7 @@ public:
         // There is no host network to fall back on: an address nobody is
         // listening on is refused, exactly as it would be.
         auto it = e._listeners.find(sa.port());
-        if (it == e._listeners.end() || it->second->aborted) {
+        if (it == e._listeners.end() || !it->second->any_open()) {
             return make_exception_future<connected_socket>(
                     std::system_error(ECONNREFUSED, std::system_category(), "connection refused"));
         }
@@ -1224,11 +1303,18 @@ public:
         auto client_end = connected_socket(
                 std::make_unique<simulated_connected_socket>(conn, false));
 
-        if (l.waiter) {
-            // Somebody is parked in accept(); hand them the connection.
-            auto pr = std::move(*l.waiter);
-            l.waiter.reset();
-            auto deliver_to = l.waiter_shard;
+        // Which shard gets this connection is decided here, by the listener's
+        // load balancing algorithm, and not by which shard happens to be in
+        // `accept()`.  That is what makes the destination a property of the
+        // connection: the shard is chosen even if nobody is waiting yet, and
+        // the connection sits in that shard's backlog until it accepts.
+        auto deliver_to = l.pick_shard(local);
+        auto& ls = *l.shards[deliver_to];
+
+        if (ls.waiter) {
+            // That shard is parked in accept(); hand it the connection.
+            auto pr = std::move(*ls.waiter);
+            ls.waiter.reset();
             auto make_result = [conn, client_address = local] {
                 return accept_result{
                     connected_socket(std::make_unique<simulated_connected_socket>(conn, true)),
@@ -1244,7 +1330,7 @@ public:
                 }});
             }
         } else {
-            l.backlog.push_back(std::move(conn));
+            ls.backlog.push_back(std::move(conn));
         }
 
         return make_ready_future<connected_socket>(std::move(client_end));
@@ -1264,46 +1350,61 @@ public:
     }
 };
 
-// A listening socket: a handle on an entry of the engine's listener table.
+// A listening socket: a handle on one shard's slot in an entry of the
+// engine's listener table.
+//
+// The entry is shared with every other shard listening on the same address,
+// but the queue this socket accepts from is its own, so a connection steered
+// to another shard is invisible here.
 class simulated_server_socket final : public server_socket_impl {
     lw_shared_ptr<simulator::listener> _listener;
+    // The shard which called `listen()`, and therefore the slot in
+    // `_listener->shards` this socket owns.  A `server_socket` may not be
+    // used from another shard, so this never changes.
+    shard_id _shard;
 
 public:
-    explicit simulated_server_socket(lw_shared_ptr<simulator::listener> l) noexcept
-        : _listener(std::move(l)) { }
+    simulated_server_socket(lw_shared_ptr<simulator::listener> l, shard_id shard) noexcept
+        : _listener(std::move(l)), _shard(shard) { }
 
     virtual future<accept_result> accept() override {
-        auto& l = *_listener;
-        if (l.aborted) {
+        SEASTAR_ASSERT(this_shard_id() == _shard
+                && "server_socket accepted on a shard other than the one which listened");
+        auto& ls = *_listener->shards[_shard];
+        if (ls.aborted) {
             return make_exception_future<accept_result>(
                     std::system_error(ECONNABORTED, std::system_category(), "accept aborted"));
         }
-        if (!l.backlog.empty()) {
-            auto conn = std::move(l.backlog.front());
-            l.backlog.pop_front();
+        if (!ls.backlog.empty()) {
+            auto conn = std::move(ls.backlog.front());
+            ls.backlog.pop_front();
             return make_ready_future<accept_result>(accept_result{
                 connected_socket(std::make_unique<simulated_connected_socket>(conn, true)),
                 conn->client_address,
             });
         }
-        SEASTAR_ASSERT(!l.waiter && "concurrent accept() on one server socket");
-        l.waiter.emplace();
-        l.waiter_shard = this_shard_id();
-        return l.waiter->get_future();
+        SEASTAR_ASSERT(!ls.waiter && "concurrent accept() on one server socket");
+        ls.waiter.emplace();
+        return ls.waiter->get_future();
     }
 
     virtual void abort_accept() override {
         auto& l = *_listener;
-        l.aborted = true;
+        auto& ls = *l.shards[_shard];
+        ls.aborted = true;
         // A parked accept() has to be woken, or the engine would never
         // quiesce: nothing else is going to resolve it.
-        if (l.waiter) {
-            auto pr = std::move(*l.waiter);
-            l.waiter.reset();
+        if (ls.waiter) {
+            auto pr = std::move(*ls.waiter);
+            ls.waiter.reset();
             pr.set_exception(std::system_error(ECONNABORTED, std::system_category(),
                     "accept aborted"));
         }
-        simulator::eng()._listeners.erase(l.address.port());
+        // The address stays reachable for as long as any shard is still
+        // listening on it; it is only unregistered once the last one is gone.
+        if (!l.any_open()) {
+            simulator::eng()._listeners.erase(l.address.port());
+        }
     }
 
     virtual socket_address local_address() const override {
@@ -1426,8 +1527,24 @@ server_socket listen(socket_address sa, listen_options opts) {
     if (inserted) {
         it->second = make_lw_shared<simulator::listener>();
         it->second->address = sa;
+        it->second->shards.resize(e._shard_count);
+        // The first `listen()` for an address fixes how connections to it are
+        // spread; the shards which join later share that decision, as they
+        // share the socket it stands for.
+        it->second->lba = opts.lba;
+        it->second->fixed_cpu = opts.fixed_cpu;
     }
-    return server_socket(std::make_unique<net::simulated_server_socket>(it->second));
+    auto& l = *it->second;
+    auto shard = this_shard_id();
+    // One `listen()` per shard per address.  A second one would be a second
+    // socket accepting from the same queue, which is not something the real
+    // API offers either.
+    if (l.shards[shard] && !l.shards[shard]->aborted) {
+        throw std::system_error(EADDRINUSE, std::system_category(),
+                "address already in use on this shard");
+    }
+    l.shards[shard].emplace();
+    return server_socket(std::make_unique<net::simulated_server_socket>(it->second, shard));
 }
 
 server_socket listen(socket_address sa) {
