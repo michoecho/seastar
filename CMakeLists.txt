@@ -56,9 +56,11 @@ add_link_options (-Wl,--build-id=sha1)
 # see the target_sources() call further down.
 set (Scylla_TRACER_REPO "/home/michal/projects/cpp_template")
 set (Scylla_TRACER_SOURCE_DIR "${Scylla_TRACER_REPO}/modules/tracer")
+set (Scylla_UTILS_SOURCE_DIR "${Scylla_TRACER_REPO}/modules/utils")
 set (Scylla_TRACER_INCLUDE_DIRS
   "${Scylla_TRACER_REPO}/modules/tracer/include"
-  "${Scylla_TRACER_REPO}/modules/static_keys/include")
+  "${Scylla_TRACER_REPO}/modules/static_keys/include"
+  "${Scylla_TRACER_REPO}/modules/utils/include")
 
 set (Seastar_ALLOC_FAILURE_INJECTION
   "DEFAULT"
@@ -888,15 +890,25 @@ target_include_directories (seastar
 # table -- see include/seastar/core/scylla_tracer.hh. -w because they are not
 # written to Seastar's -Wall -Werror, and making them so is not the point of the
 # experiment.
+#
+# The barrier comes along for the ride: it is what the rendezvous point in
+# src/core/rendezvous.cc gathers the shards with, and it is a plain
+# std::mutex/condition_variable affair with no dependency on the tracer. Its
+# tests live in modules/utils/barrier_test.cc, which is deliberately not
+# listed here -- this build has no doctest to link them against.
 target_sources (seastar
   PRIVATE
     ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
     ${Scylla_TRACER_SOURCE_DIR}/codegen.cc
-    src/core/scylla_tracer.cc)
+    ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
+    src/core/scylla_tracer.cc
+    src/core/rendezvous.cc)
 set_source_files_properties (
   ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
   ${Scylla_TRACER_SOURCE_DIR}/codegen.cc
+  ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
   src/core/scylla_tracer.cc
+  src/core/rendezvous.cc
   PROPERTIES COMPILE_OPTIONS "-w")
 
 set (Seastar_PRIVATE_CXX_FLAGS

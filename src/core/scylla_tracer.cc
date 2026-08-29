@@ -23,7 +23,9 @@
  */
 
 #include <seastar/core/scylla_tracer.hh>
+#include <seastar/core/scylla_tracer_control.hh>
 
+#include <seastar/core/rendezvous.hh>
 #include <seastar/core/shard_id.hh>
 
 #include "tracer/codegen.h"
@@ -101,6 +103,16 @@ void trace_io_begin(uint64_t task, uint64_t io) noexcept {
 void trace_io_end(uint64_t task, uint64_t io) noexcept {
     ensure_tracer();
     TRACEPOINT(tracer::event_level::debug, "io_end", "task", task, "io", io);
+}
+
+future<bool> set_tracepoints_enabled(bool enabled) {
+    // The action runs on shard 0 with every other shard parked in its poll
+    // loop, which is the only place this may happen: it rewrites the branch
+    // instruction at every tracepoint call site, and a shard executing one of
+    // them as it changes is undefined. It touches no seastar state and does
+    // not allocate -- it walks the tracepoint table and calls mprotect and
+    // memcpy -- which is what a rendezvous action has to be.
+    return run_at_rendezvous([enabled] { tracer::set_all_tracepoints_enabled(enabled); });
 }
 
 uint64_t next_io_id() noexcept {

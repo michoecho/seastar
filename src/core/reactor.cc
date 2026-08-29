@@ -131,6 +131,7 @@
 #include <seastar/core/prefetch.hh>
 #include <seastar/core/print.hh>
 #include <seastar/core/reactor.hh>
+#include <seastar/core/rendezvous.hh>
 #include <seastar/core/report_exception.hh>
 #include <seastar/core/resource.hh>
 #include <seastar/core/scheduling.hh>
@@ -3413,6 +3414,14 @@ int reactor::do_run() {
 
     poller expire_lowres_timers(std::make_unique<lowres_timer_pollfn>(*this));
     poller sig_poller(std::make_unique<signal_pollfn>(*this));
+
+    // Last, deliberately. It is the point at which this shard is known to be
+    // running nothing else, which is what makes it safe to park here while
+    // shard 0 does something the other shards must not be looking at -- see
+    // include/seastar/core/rendezvous.hh. Anything polled after it would run
+    // between the park and the next task, which is not somewhere a rendezvous
+    // wants to hand control back to.
+    poller rendezvous_poller(internal::make_rendezvous_pollfn());
 
     using namespace std::chrono_literals;
     auto last_idle = _total_idle;
