@@ -47,8 +47,18 @@ project (Seastar
   VERSION 1.0
   LANGUAGES CXX)
 
-# Keep build IDs available for backtraces in every build mode.
+# Keep build IDs available for backtraces in every build mode. The tracer needs
+# them for a second reason: a build ID is how a trace names the object a
+# tracepoint address belongs to.
 add_link_options (-Wl,--build-id=sha1)
+
+# Where the cpp_template playground's tracer lives. Absolute, and hardcoded --
+# see the target_sources() call further down.
+set (Scylla_TRACER_REPO "/home/michal/projects/cpp_template")
+set (Scylla_TRACER_SOURCE_DIR "${Scylla_TRACER_REPO}/modules/tracer")
+set (Scylla_TRACER_INCLUDE_DIRS
+  "${Scylla_TRACER_REPO}/modules/tracer/include"
+  "${Scylla_TRACER_REPO}/modules/static_keys/include")
 
 set (Seastar_ALLOC_FAILURE_INJECTION
   "DEFAULT"
@@ -866,8 +876,28 @@ target_include_directories (seastar
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${Seastar_GEN_BINARY_DIR}/include>
     $<BUILD_INTERFACE:${Seastar_GEN_BINARY_DIR}/src>
+    ${Scylla_TRACER_INCLUDE_DIRS}
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# The binary tracepoints, taken straight out of the cpp_template playground by
+# absolute path rather than vendored or packaged: this is a prototype, and the
+# two build systems have nothing to say to each other.
+#
+# They live in libseastar.so and nowhere else, so the process has one tracepoint
+# table -- see include/seastar/core/scylla_tracer.hh. -w because they are not
+# written to Seastar's -Wall -Werror, and making them so is not the point of the
+# experiment.
+target_sources (seastar
+  PRIVATE
+    ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
+    ${Scylla_TRACER_SOURCE_DIR}/codegen.cc
+    src/core/scylla_tracer.cc)
+set_source_files_properties (
+  ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
+  ${Scylla_TRACER_SOURCE_DIR}/codegen.cc
+  src/core/scylla_tracer.cc
+  PROPERTIES COMPILE_OPTIONS "-w")
 
 set (Seastar_PRIVATE_CXX_FLAGS
   -fno-semantic-interposition

@@ -22,6 +22,7 @@
 #pragma once
 
 #include <seastar/core/scheduling.hh>
+#include <seastar/core/scylla_tracer.hh>
 #include <seastar/util/backtrace.hh>
 
 #include <utility>
@@ -31,6 +32,12 @@ namespace seastar {
 
 class task {
     std::source_location _resume_point = {};
+
+public:
+    // Default-initialised, which is what makes it inherited: a task created
+    // while some request's task is current is stamped with that request. See
+    // task_id in scylla_tracer.hh.
+    task_id _id;
 
 protected:
     scheduling_group _sg;

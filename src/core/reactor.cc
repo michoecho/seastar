@@ -2783,7 +2783,13 @@ bool reactor::task_queue::run_tasks() {
         SEASTAR_REACTOR_TRACE(task_start, _id, _name.c_str());
         internal::task_histogram_add_task(*tsk);
         r._current_task = tsk;
-        tsk->run_and_dispose();
+        {
+            // Read before running: run_and_dispose() deletes the task.
+            const uint64_t id = tsk->_id;
+            switch_task st(id);
+            trace_run_task(st.prev(), id);
+            tsk->run_and_dispose();
+        }
         r._current_task = nullptr;
         SEASTAR_REACTOR_TRACE(task_end, _id, _tasks_processed);
         ++_tasks_processed;

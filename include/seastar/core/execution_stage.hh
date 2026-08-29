@@ -27,6 +27,7 @@
 #include <seastar/core/sstring.hh>
 #include <seastar/core/metrics.hh>
 #include <seastar/core/scheduling.hh>
+#include <seastar/core/scylla_tracer.hh>
 #include <seastar/util/reference_wrapper.hh>
 #include <seastar/util/noncopyable_function.hh>
 #include <seastar/util/tuple_utils.hh>
@@ -219,6 +220,8 @@ class concrete_execution_stage_base : public execution_stage {
 
     struct work_item {
         input_type _in;
+        // Default-initialised: the task that enqueued this item.
+        task_id _task_id;
         promise_type _ready;
 
         work_item(typename internal::wrap_for_es<Args>::type... args) : _in(std::move(args)...) { }
@@ -242,8 +245,13 @@ private:
             auto& wi = _queue.front();
             auto wi_in = std::move(wi._in);
             auto wi_ready = std::move(wi._ready);
+            const uint64_t wi_task_id = wi._task_id;
             _queue.pop_front();
-            futurize<ReturnType>::apply(_function, unwrap(std::move(wi_in))).forward_to(std::move(wi_ready));
+            {
+                switch_task st(wi_task_id);
+                trace_execution_stage(st.prev(), wi_task_id);
+                futurize<ReturnType>::apply(_function, unwrap(std::move(wi_in))).forward_to(std::move(wi_ready));
+            }
             _stats.function_calls_executed++;
 
             if (internal::scheduler_need_preempt()) {
