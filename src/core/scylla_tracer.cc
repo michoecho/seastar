@@ -16,6 +16,12 @@
  *   io_begin{task, io}           a task submitted an I/O and is now waiting
  *   io_end{task, io}             that I/O completed
  *
+ * One event is *not* here: stacktrace_sample, which lives in
+ * src/core/scylla_stacktrace_sampler.cc beside the perf ring it is drained
+ * from. The rule the file comment above states is that a call site must be an
+ * out-of-line function in libseastar.so, not that they must all be in one
+ * file, and that one has nothing to say to the hooks below.
+ *
  * The first three are *switches*: `task` is the id the shard is running from
  * here on, `prev` the one it was running. A trace viewer recovers one request
  * by taking every record whose task is the id a cql_request opened, which works
@@ -27,6 +33,7 @@
 #include <seastar/core/scylla_tracer_control.hh>
 
 #include <seastar/core/rendezvous.hh>
+#include <seastar/core/scylla_stacktrace_sampler.hh>
 #include <seastar/core/shard_id.hh>
 
 #include "tracer/codegen.h"
@@ -76,6 +83,10 @@ inline void ensure_tracer() {
 
 }
 
+void ensure_thread_tracer() noexcept {
+    ensure_tracer();
+}
+
 void trace_run_task(uint64_t prev, uint64_t task, srcloc::location at) noexcept {
     ensure_tracer();
     TRACEPOINT(tracer::event_level::debug, "run_task", "prev", prev, "task", task, "at", at);
@@ -113,7 +124,18 @@ future<bool> set_tracepoints_enabled(bool enabled) {
     // them as it changes is undefined. It touches no seastar state and does
     // not allocate -- it walks the tracepoint table and calls mprotect and
     // memcpy -- which is what a rendezvous action has to be.
-    return run_at_rendezvous([enabled] { tracer::set_all_tracepoints_enabled(enabled); });
+    //
+    // The stack sampler follows the same switch, and does not need the
+    // rendezvous: enabling a perf event is an ioctl on a file descriptor, not
+    // a patch of running code. It is set here rather than beside the patching
+    // so that a rendezvous that never gathered leaves *nothing* switched.
+    return run_at_rendezvous([enabled] { tracer::set_all_tracepoints_enabled(enabled); })
+            .then([enabled](bool switched) {
+        if (switched) {
+            set_stacktrace_sampling_enabled(enabled);
+        }
+        return switched;
+    });
 }
 
 uint64_t next_io_id() noexcept {

@@ -27,4 +27,12 @@ namespace seastar {
 /// tracepoints are as they were.
 future<bool> set_tracepoints_enabled(bool enabled);
 
+/// Install this thread's trace rings if it has none yet.
+///
+/// Every tracepoint hook does this for itself; it is exposed only for the
+/// stack sampler, whose poller may be the first thing on a reactor thread to
+/// write a record. Constructing the rings walks the loaded objects and writes
+/// the metadata prologue, so it cannot happen at static-init time.
+void ensure_thread_tracer() noexcept;
+
 }

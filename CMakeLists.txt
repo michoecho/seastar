@@ -52,6 +52,17 @@ project (Seastar
 # tracepoint address belongs to.
 add_link_options (-Wl,--build-id=sha1)
 
+# The stack sampler asks the kernel to walk the user stack by frame pointer --
+# see include/seastar/core/scylla_stacktrace_sampler.hh -- and a function that
+# reused rbp for something else is a walk that stops there or, worse, wanders.
+# So the whole library keeps its frame pointers; Scylla's own top-level
+# CMakeLists.txt does the same for the executable. It costs a register and a
+# couple of instructions per call, and it is the entire price of the sampler
+# being frame-pointer based rather than copying stacks out.
+#
+# Up here because add_compile_options() only reaches targets created after it.
+add_compile_options (-fno-omit-frame-pointer)
+
 # Where the cpp_template playground's tracer lives. Absolute, and hardcoded --
 # see the target_sources() call further down.
 set (Scylla_TRACER_REPO "/home/michal/projects/cpp_template")
@@ -905,6 +916,7 @@ target_sources (seastar
     ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
     ${Scylla_SRCLOC_SOURCE_DIR}/source_location.cc
     src/core/scylla_tracer.cc
+    src/core/scylla_stacktrace_sampler.cc
     src/core/rendezvous.cc)
 set_source_files_properties (
   ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
@@ -912,6 +924,7 @@ set_source_files_properties (
   ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
   ${Scylla_SRCLOC_SOURCE_DIR}/source_location.cc
   src/core/scylla_tracer.cc
+  src/core/scylla_stacktrace_sampler.cc
   src/core/rendezvous.cc
   PROPERTIES COMPILE_OPTIONS "-w")
 

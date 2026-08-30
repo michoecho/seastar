@@ -132,6 +132,7 @@
 #include <seastar/core/print.hh>
 #include <seastar/core/reactor.hh>
 #include <seastar/core/rendezvous.hh>
+#include <seastar/core/scylla_stacktrace_sampler.hh>
 #include <seastar/core/report_exception.hh>
 #include <seastar/core/resource.hh>
 #include <seastar/core/scheduling.hh>
@@ -3415,6 +3416,14 @@ int reactor::do_run() {
 
     poller expire_lowres_timers(std::make_unique<lowres_timer_pollfn>(*this));
     poller sig_poller(std::make_unique<signal_pollfn>(*this));
+
+    // Drains this shard's perf ring into stacktrace_sample tracepoints. Placed
+    // beside the rendezvous poller for the same reason it is: a sample says
+    // which task was on the cpu when it was taken, so the record it becomes
+    // wants to be written between tasks rather than inside one. It does
+    // nothing at all until tracing is switched on -- see
+    // include/seastar/core/scylla_stacktrace_sampler.hh.
+    poller stacktrace_sampler_poller(internal::make_stacktrace_sampler_pollfn());
 
     // Last, deliberately. It is the point at which this shard is known to be
     // running nothing else, which is what makes it safe to park here while
