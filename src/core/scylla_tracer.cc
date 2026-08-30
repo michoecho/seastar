@@ -7,7 +7,8 @@
  * The event set is the 2023 `old-tracer` experiment's, renamed from numbers to
  * tracepoints with named parameters:
  *
- *   run_task{prev, task}         the reactor picked a task off a run queue
+ *   run_task{prev, task, at}     the reactor picked a task off a run queue, and
+                                where that task was created (task::location())
  *   execution_stage{prev, task}  an execution stage ran a queued work item
  *   semaphore_execute{prev, task} the reader concurrency semaphore's loop ran
  *                                a queued read, as the task that asked for it
@@ -75,9 +76,9 @@ inline void ensure_tracer() {
 
 }
 
-void trace_run_task(uint64_t prev, uint64_t task) noexcept {
+void trace_run_task(uint64_t prev, uint64_t task, srcloc::location at) noexcept {
     ensure_tracer();
-    TRACEPOINT(tracer::event_level::debug, "run_task", "prev", prev, "task", task);
+    TRACEPOINT(tracer::event_level::debug, "run_task", "prev", prev, "task", task, "at", at);
 }
 
 void trace_execution_stage(uint64_t prev, uint64_t task) noexcept {

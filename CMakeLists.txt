@@ -57,10 +57,12 @@ add_link_options (-Wl,--build-id=sha1)
 set (Scylla_TRACER_REPO "/home/michal/projects/cpp_template")
 set (Scylla_TRACER_SOURCE_DIR "${Scylla_TRACER_REPO}/modules/tracer")
 set (Scylla_UTILS_SOURCE_DIR "${Scylla_TRACER_REPO}/modules/utils")
+set (Scylla_SRCLOC_SOURCE_DIR "${Scylla_TRACER_REPO}/modules/source_location")
 set (Scylla_TRACER_INCLUDE_DIRS
   "${Scylla_TRACER_REPO}/modules/tracer/include"
   "${Scylla_TRACER_REPO}/modules/static_keys/include"
-  "${Scylla_TRACER_REPO}/modules/utils/include")
+  "${Scylla_TRACER_REPO}/modules/utils/include"
+  "${Scylla_TRACER_REPO}/modules/source_location/include")
 
 set (Seastar_ALLOC_FAILURE_INJECTION
   "DEFAULT"
@@ -901,12 +903,14 @@ target_sources (seastar
     ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
     ${Scylla_TRACER_SOURCE_DIR}/codegen.cc
     ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
+    ${Scylla_SRCLOC_SOURCE_DIR}/source_location.cc
     src/core/scylla_tracer.cc
     src/core/rendezvous.cc)
 set_source_files_properties (
   ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
   ${Scylla_TRACER_SOURCE_DIR}/codegen.cc
   ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
+  ${Scylla_SRCLOC_SOURCE_DIR}/source_location.cc
   src/core/scylla_tracer.cc
   src/core/rendezvous.cc
   PROPERTIES COMPILE_OPTIONS "-w")

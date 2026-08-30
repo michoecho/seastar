@@ -29,6 +29,8 @@
 
 #pragma once
 
+#include "source_location/source_location.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -72,7 +74,12 @@ struct [[nodiscard]] switch_task {
 
 // The events. Each is one TRACEPOINT() in scylla_tracer.cc; see the file
 // comment there for what the trace viewer makes of them.
-void trace_run_task(uint64_t prev, uint64_t task) noexcept;
+// `at` is where the task being run was created -- task::location(), which is the
+// then() call site or the co_await the coroutine suspended at. It is one address
+// in one of the process's objects, so reading it back needs those objects; that
+// is somebody else's job, and this process does not copy them anywhere. See
+// "Source locations" in modules/trace-viewer/README.md.
+void trace_run_task(uint64_t prev, uint64_t task, srcloc::location at) noexcept;
 void trace_execution_stage(uint64_t prev, uint64_t task) noexcept;
 void trace_cql_request(uint64_t prev, uint64_t task) noexcept;
 void trace_semaphore_execute(uint64_t prev, uint64_t task) noexcept;

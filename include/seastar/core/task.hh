@@ -25,13 +25,26 @@
 #include <seastar/core/scylla_tracer.hh>
 #include <seastar/util/backtrace.hh>
 
+#include "source_location/source_location.h"
+
+#include <bit>
 #include <utility>
 #include <source_location>
 
 namespace seastar {
 
 class task {
-    std::source_location _resume_point = {};
+    // Where this task came from: the `then()` call site, or the `co_await` the
+    // coroutine suspended at. One word -- the address of the compiler's own
+    // source_location constant -- which is exactly what a tracepoint can carry
+    // and what modules/source_location exists to read back. See srcloc::location
+    // there, and "resolving a location" in tracer/codegen.h.
+    //
+    // Stored as a srcloc::location rather than as the std::source_location it
+    // arrives as because that is the form the trace wants; the two are the same
+    // pointer, and get_resume_point() below hands the other spelling back to
+    // Seastar's own users of it (the reactor's task-count dump, backtraces).
+    srcloc::location _location = srcloc::location::none();
 
 public:
     // Default-initialised, which is what makes it inherited: a task created
@@ -61,8 +74,14 @@ public:
     virtual void run_and_dispose() noexcept = 0;
     /// Returns the next task which is waiting for this task to complete execution, or nullptr.
     virtual task* waiting_task() noexcept = 0;
-    void update_resume_point(std::source_location sl) { _resume_point = sl; }
-    auto get_resume_point() const { return _resume_point; }
+    void update_resume_point(std::source_location sl) {
+        _location = srcloc::location::at(std::bit_cast<const srcloc::entry*>(sl));
+    }
+    auto get_resume_point() const { return std::bit_cast<std::source_location>(_location.get()); }
+
+    /// Where this task was created, for the tracer. Empty -- and decoding as
+    /// `<none>` -- for a task nobody gave a resume point to.
+    srcloc::location location() const noexcept { return _location; }
     scheduling_group group() const { return _sg; }
 #ifdef SEASTAR_TASK_BACKTRACE
     void make_backtrace() noexcept;

@@ -2787,8 +2787,9 @@ bool reactor::task_queue::run_tasks() {
         {
             // Read before running: run_and_dispose() deletes the task.
             const uint64_t id = tsk->_id;
+            const srcloc::location at = tsk->location();
             switch_task st(id);
-            trace_run_task(st.prev(), id);
+            trace_run_task(st.prev(), id, at);
             tsk->run_and_dispose();
         }
         r._current_task = nullptr;
