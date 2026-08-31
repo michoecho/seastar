@@ -15,6 +15,10 @@
  *   cql_request{prev, task}      a CQL frame arrived and opened a new chain
  *   io_begin{task, io}           a task submitted an I/O and is now waiting
  *   io_end{task, io}             that I/O completed
+ *   prepared_statement_added     a prepared statement entered the shard cache
+ *   prepared_statement_removed   a prepared statement left the shard cache
+ *   prepared_query_run           a prepared statement was executed
+ *   prepared_statements_snapshot_* a full cache snapshot, emitted at dump time
  *
  * One event is *not* here: stacktrace_sample, which lives in
  * src/core/scylla_stacktrace_sampler.cc beside the perf ring it is drained
@@ -115,6 +119,42 @@ void trace_io_begin(uint64_t task, uint64_t io) noexcept {
 void trace_io_end(uint64_t task, uint64_t io) noexcept {
     ensure_tracer();
     TRACEPOINT(tracer::event_level::debug, "io_end", "task", task, "io", io);
+}
+
+void trace_prepared_statement_added(std::string_view keyspace, std::string_view statement,
+        std::span<const std::byte> id) noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::info, "prepared_statement_added",
+            "keyspace", keyspace, "statement", statement, "id", id);
+}
+
+void trace_prepared_statement_removed(std::string_view keyspace, std::string_view statement,
+        std::span<const std::byte> id) noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::info, "prepared_statement_removed",
+            "keyspace", keyspace, "statement", statement, "id", id);
+}
+
+void trace_prepared_query_run(std::span<const std::byte> id) noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::info, "prepared_query_run", "id", id);
+}
+
+void trace_prepared_statements_snapshot_begin() noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::info, "prepared_statements_snapshot_begin");
+}
+
+void trace_prepared_statement_snapshot_entry(std::string_view keyspace, std::string_view statement,
+        std::span<const std::byte> id) noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::info, "prepared_statement_snapshot_entry",
+            "keyspace", keyspace, "statement", statement, "id", id);
+}
+
+void trace_prepared_statements_snapshot_end() noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::info, "prepared_statements_snapshot_end");
 }
 
 future<bool> set_tracepoints_enabled(bool enabled) {

@@ -33,7 +33,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 
@@ -85,6 +87,18 @@ void trace_cql_request(uint64_t prev, uint64_t task) noexcept;
 void trace_semaphore_execute(uint64_t prev, uint64_t task) noexcept;
 void trace_io_begin(uint64_t task, uint64_t io) noexcept;
 void trace_io_end(uint64_t task, uint64_t io) noexcept;
+// Prepared-statement records deliberately carry no task id. The viewer derives
+// the running task from the shard timeline, while the statement id and its
+// metadata remain independent of task propagation.
+void trace_prepared_statement_added(std::string_view keyspace, std::string_view statement,
+        std::span<const std::byte> id) noexcept;
+void trace_prepared_statement_removed(std::string_view keyspace, std::string_view statement,
+        std::span<const std::byte> id) noexcept;
+void trace_prepared_query_run(std::span<const std::byte> id) noexcept;
+void trace_prepared_statements_snapshot_begin() noexcept;
+void trace_prepared_statement_snapshot_entry(std::string_view keyspace, std::string_view statement,
+        std::span<const std::byte> id) noexcept;
+void trace_prepared_statements_snapshot_end() noexcept;
 
 /// A fresh I/O id, unique within this shard.
 uint64_t next_io_id() noexcept;
