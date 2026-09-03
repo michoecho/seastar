@@ -19,6 +19,11 @@
  *   prepared_statement_removed   a prepared statement left the shard cache
  *   prepared_query_run           a prepared statement was executed
  *   prepared_statements_snapshot_* a full cache snapshot, emitted at dump time
+ *   rpc_connection_{open,close}  lifecycle records with endpoint metadata
+ *   rpc_message_{sent,received}  direction-local transport sequence records
+ *   rpc_reply_{sent,received}    the same sequence plus the RPC request id
+ *   rpc_connections_snapshot_*   the live connection map, emitted at dump time
+ *   rpc_request_handled          an inbound request opened a task chain
  *
  * One event is *not* here: stacktrace_sample, which lives in
  * src/core/scylla_stacktrace_sampler.cc beside the perf ring it is drained
@@ -43,6 +48,10 @@
 #include "tracer/codegen.h"
 #include "tracer/tracer.h"
 
+#include <atomic>
+#include <string>
+#include <unordered_map>
+
 namespace seastar {
 
 // Seeded with the shard in the top bits, because a task id is *not* shard-local
@@ -64,6 +73,17 @@ namespace {
 constexpr size_t info_capacity = 4 * 1024 * 1024;
 constexpr size_t debug_capacity = 32 * 1024 * 1024;
 constexpr size_t metadata_capacity = 64 * 1024;
+
+struct rpc_connection_record {
+    std::string local;
+    std::string remote;
+};
+
+// This is intentionally per shard. RPC connections are owned by one reactor
+// thread, while the ids themselves are process-wide and therefore allocated
+// from the atomic below.
+thread_local std::unordered_map<uint64_t, rpc_connection_record> rpc_connections;
+std::atomic<uint64_t> next_rpc_connection{1};
 
 // Deliberately leaked, and that is the point rather than an oversight. A
 // thread_local with a destructor would be torn down at thread exit while the
@@ -155,6 +175,79 @@ void trace_prepared_statement_snapshot_entry(std::string_view keyspace, std::str
 void trace_prepared_statements_snapshot_end() noexcept {
     ensure_tracer();
     TRACEPOINT(tracer::event_level::info, "prepared_statements_snapshot_end");
+}
+
+uint64_t next_rpc_connection_id() noexcept {
+    return next_rpc_connection.fetch_add(1, std::memory_order_relaxed);
+}
+
+void trace_rpc_connection_open(uint64_t connection, std::string_view local,
+        std::string_view remote) noexcept {
+    try {
+        rpc_connections.insert_or_assign(connection, rpc_connection_record{
+                std::string(local), std::string(remote)});
+        ensure_tracer();
+        TRACEPOINT(tracer::event_level::info, "rpc_connection_open",
+                "connection", connection, "local", local, "remote", remote);
+    } catch (...) {
+        // Tracing must never change RPC connection establishment semantics.
+    }
+}
+
+void trace_rpc_connection_close(uint64_t connection) noexcept {
+    try {
+        rpc_connections.erase(connection);
+        ensure_tracer();
+        TRACEPOINT(tracer::event_level::info, "rpc_connection_close",
+                "connection", connection);
+    } catch (...) {
+    }
+}
+
+void trace_rpc_message_sent(uint64_t connection, uint64_t sequence, uint64_t task) noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::debug, "rpc_message_sent",
+            "connection", connection, "sequence", sequence, "task", task);
+}
+
+void trace_rpc_message_received(uint64_t connection, uint64_t sequence) noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::debug, "rpc_message_received",
+            "connection", connection, "sequence", sequence);
+}
+
+void trace_rpc_reply_sent(uint64_t connection, uint64_t sequence, int64_t msg_id,
+        uint64_t task) noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::debug, "rpc_reply_sent",
+            "connection", connection, "sequence", sequence, "msg_id", msg_id, "task", task);
+}
+
+void trace_rpc_reply_received(uint64_t connection, uint64_t sequence, int64_t msg_id) noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::debug, "rpc_reply_received",
+            "connection", connection, "sequence", sequence, "msg_id", msg_id);
+}
+
+void trace_rpc_connections_snapshot() noexcept {
+    try {
+        ensure_tracer();
+        TRACEPOINT(tracer::event_level::info, "rpc_connections_snapshot_begin");
+        for (const auto& [connection, record] : rpc_connections) {
+            TRACEPOINT(tracer::event_level::info, "rpc_connection_snapshot_entry",
+                    "connection", connection, "local", std::string_view(record.local),
+                    "remote", std::string_view(record.remote));
+        }
+        TRACEPOINT(tracer::event_level::info, "rpc_connections_snapshot_end");
+    } catch (...) {
+    }
+}
+
+void trace_rpc_request_handled(uint64_t connection, uint64_t sequence, uint64_t prev,
+        uint64_t task) noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::debug, "rpc_request_handled",
+            "connection", connection, "sequence", sequence, "prev", prev, "task", task);
 }
 
 future<bool> set_tracepoints_enabled(bool enabled) {

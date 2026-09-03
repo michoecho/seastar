@@ -42,6 +42,7 @@
 #include <seastar/core/scheduling.hh>
 #include <seastar/core/deleter.hh>
 #include <seastar/core/semaphore.hh>
+#include <seastar/core/scylla_tracer.hh>
 #include <seastar/util/backtrace.hh>
 #include <seastar/util/log.hh>
 
@@ -262,9 +263,16 @@ protected:
     struct outgoing_entry : public bi::list_base_hook<bi::link_mode<bi::auto_unlink>> {
         timer<rpc_clock_type> t;
         snd_buf buf;
+        std::optional<int64_t> reply_msg_id;
+        // Default-constructed, and that is the point: this entry is created in
+        // connection::send(), which runs in the task that wanted the message
+        // sent.  The send loop that later writes it out is a different task and
+        // would attribute every message on the connection to itself.
+        task_id trace_task;
         promise<> done;
         cancellable* pcancel = nullptr;
-        outgoing_entry(snd_buf b) : buf(std::move(b)) {}
+        outgoing_entry(snd_buf b, std::optional<int64_t> reply = {})
+                : buf(std::move(b)), reply_msg_id(reply) {}
 
         outgoing_entry(outgoing_entry&&) = delete;
         outgoing_entry(const outgoing_entry&) = delete;
@@ -296,6 +304,13 @@ protected:
     // stream related fields
     bool _is_stream = false;
     connection_id _id = invalid_connection_id;
+    // Trace identity is local to this process. It is intentionally distinct
+    // from the protocol connection_id, which is only used by stream setup.
+    const uint64_t _trace_connection_id;
+    uint64_t _trace_send_sequence = 0;
+    uint64_t _trace_receive_sequence = 0;
+    bool _trace_connection_open = false;
+    bool _trace_connection_closed = false;
 
     std::unordered_map<connection_id, xshard_connection_ptr> _streams;
     queue<rcv_buf> _stream_queue = queue<rcv_buf>(max_queued_stream_buffers);
@@ -314,7 +329,8 @@ protected:
 
     snd_buf compress(snd_buf buf);
     future<> send_buffer(snd_buf buf);
-    future<> send(snd_buf buf, std::optional<rpc_clock_type::time_point> timeout = {}, cancellable* cancel = nullptr);
+    future<> send(snd_buf buf, std::optional<rpc_clock_type::time_point> timeout = {}, cancellable* cancel = nullptr,
+            std::optional<int64_t> reply_msg_id = {});
     future<> send_entry(outgoing_entry& d) noexcept;
     future<> stop_send_loop(std::exception_ptr ex);
     future<std::optional<rcv_buf>>  read_stream_frame_compressed(input_stream<char>& in);
@@ -330,13 +346,17 @@ public:
     connection(connected_socket&& fd, const logger& l, void* s, connection_id id = invalid_connection_id) : connection(l, s, id) {
         set_socket(std::move(fd));
     }
-    connection(const logger& l, void* s, connection_id id = invalid_connection_id) : _logger(l), _serializer(s), _id(id) {}
+    connection(const logger& l, void* s, connection_id id = invalid_connection_id)
+            : _logger(l), _serializer(s), _id(id), _trace_connection_id(next_rpc_connection_id()) {}
     virtual ~connection() {}
     size_t outgoing_queue_length() const noexcept {
         return _outgoing_queue_size;
     }
 
     void set_socket(connected_socket&& fd);
+    uint64_t trace_connection_id() const noexcept { return _trace_connection_id; }
+    uint64_t next_trace_receive_sequence() noexcept { return ++_trace_receive_sequence; }
+    uint64_t last_trace_receive_sequence() const noexcept { return _trace_receive_sequence; }
     bool error() const noexcept { return _error; }
     void abort();
     future<> stop() noexcept;

@@ -183,10 +183,24 @@ future<> connection::send_entry(outgoing_entry& d) noexcept {
                 d.buf.size -= sizeof(uint64_t);
             }
         }
+        const bool is_message = d.buf.size != 0;
+        auto reply_msg_id = d.reply_msg_id;
+        // Whoever queued this entry, rather than the send loop we are running
+        // in.  See outgoing_entry::trace_task.
+        const uint64_t trace_task = d.trace_task;
+        auto sequence = is_message ? ++_trace_send_sequence : 0;
         auto buf = compress(std::move(d.buf));
-        return send_buffer(std::move(buf)).then([this] {
+        return send_buffer(std::move(buf)).then([this, is_message, sequence, reply_msg_id, trace_task] {
             _stats.sent_messages++;
-            return _connected->write_buf.flush();
+            return _connected->write_buf.flush().then([this, is_message, sequence, reply_msg_id, trace_task] {
+                if (is_message) {
+                    trace_rpc_message_sent(_trace_connection_id, sequence, trace_task);
+                }
+                if (is_message && reply_msg_id) {
+                    trace_rpc_reply_sent(_trace_connection_id, sequence, std::abs(*reply_msg_id),
+                            trace_task);
+                }
+            });
         });
     });
 }
@@ -197,6 +211,10 @@ void connection::set_negotiated() noexcept {
 }
 
 future<> connection::stop_send_loop(std::exception_ptr ex) {
+    if (_trace_connection_open && !_trace_connection_closed) {
+        _trace_connection_closed = true;
+        trace_rpc_connection_close(_trace_connection_id);
+    }
     _error = true;
     if (_connected) {
         _connected->fd.shutdown_output();
@@ -237,7 +255,11 @@ void connection::set_socket(connected_socket&& fd) {
     if (_connected.has_value()) {
         throw std::runtime_error("already connected");
     }
+    auto local = format("{}", fd.local_address());
+    auto remote = format("{}", fd.remote_address());
     _connected.emplace(std::move(fd));
+    _trace_connection_open = true;
+    trace_rpc_connection_open(_trace_connection_id, std::string_view(local), std::string_view(remote));
 }
 
 future<> connection::send_negotiation_frame(feature_map features) {
@@ -290,13 +312,14 @@ void connection::withdraw(outgoing_entry::container_t::iterator it, std::excepti
     }
 }
 
-future<> connection::send(snd_buf buf, std::optional<rpc_clock_type::time_point> timeout, cancellable* cancel) {
+future<> connection::send(snd_buf buf, std::optional<rpc_clock_type::time_point> timeout, cancellable* cancel,
+        std::optional<int64_t> reply_msg_id) {
     if (!_error) {
         if (timeout && *timeout <= rpc_clock_type::now()) {
             return make_ready_future<>();
         }
 
-        auto p = std::make_unique<outgoing_entry>(std::move(buf));
+        auto p = std::make_unique<outgoing_entry>(std::move(buf), reply_msg_id);
         auto& d = *p;
         _outgoing_queue.push_back(d);
         _outgoing_queue_size++;
@@ -464,6 +487,7 @@ connection::read_frame(socket_address info, input_stream<char>& in) {
         }
         auto [size, h] = FrameType::decode_header(header.get());
         if (!size) {
+            trace_rpc_message_received(_trace_connection_id, next_trace_receive_sequence());
             return make_ready_future<typename FrameType::return_type>(FrameType::make_value(h, rcv_buf()));
         } else {
             return read_rcv_buf(in, size).then([this, info, h = std::move(h), size] (rcv_buf rb) {
@@ -471,6 +495,7 @@ connection::read_frame(socket_address info, input_stream<char>& in) {
                     _logger(info, format("unexpected eof on a {} while reading data: expected {:d} got {:d}", FrameType::role(), size, rb.size));
                     return make_ready_future<typename FrameType::return_type>(FrameType::empty_value());
                 } else {
+                    trace_rpc_message_received(_trace_connection_id, next_trace_receive_sequence());
                     return make_ready_future<typename FrameType::return_type>(FrameType::make_value(h, std::move(rb)));
                 }
             });
@@ -1001,6 +1026,9 @@ future<> client::loop(client_options ops, const socket_address& addr, const sock
                 continue;
             }
             auto&& [msg_id, ht, data] = co_await read_response_frame_compressed(_connected->read_buf);
+            if (data) {
+                trace_rpc_reply_received(trace_connection_id(), last_trace_receive_sequence(), std::abs(msg_id));
+            }
             auto it = _outstanding.find(std::abs(msg_id));
             if (!data) {
                 _error = true;
@@ -1196,7 +1224,7 @@ server::connection::respond(int64_t msg_id, snd_buf&& data, std::optional<rpc_cl
         data.size -= sizeof(uint32_t);
         response_frame::encode_header(msg_id, data);
     }
-    return send(std::move(data), timeout);
+    return send(std::move(data), timeout, nullptr, msg_id);
 }
 
 future<> server::connection::send_unknown_verb_reply(std::optional<rpc_clock_type::time_point> timeout, int64_t msg_id, uint64_t type) {
@@ -1236,6 +1264,10 @@ future<> server::connection::process() {
                 continue;
             }
             auto [expire, type, msg_id, data] = co_await read_request_frame_compressed(_connected->read_buf);
+            // The frame that read_frame() has just counted.  Reads on a
+            // connection are serialized through this loop, so nothing else can
+            // have bumped the counter in between.
+            const uint64_t trace_sequence = last_trace_receive_sequence();
             if (!data) {
                 _error = true;
                 continue;
@@ -1253,13 +1285,31 @@ future<> server::connection::process() {
                 // If the new method of per-connection scheduling group was used, honor it.
                 // Otherwise, use the old per-handler scheduling group.
                 auto sg = _isolation_config ? _isolation_config->sched_group : h->handler.sg;
-                if (sg == current_scheduling_group()) {
-                    co_await h->handler.func(shared_from_this(), timeout, msg_id, std::move(data.value()), std::move(h->holder));
-                    continue;
+                // A fresh task chain per inbound request, the way the CQL server
+                // opens one per frame.  Without it every request on a connection
+                // inherits this loop's id and a replica's work for one request
+                // cannot be told from the connection's whole life.
+                //
+                // The switch is over the *creation* of the handler's chain only.
+                // Holding it across the co_await below would hand this loop's
+                // own continuation the request's id, and the loop would keep it
+                // for every request after this one.
+                future<> handled = make_ready_future<>();
+                {
+                    auto st = switch_task(fresh_task_id++);
+                    trace_rpc_request_handled(trace_connection_id(), trace_sequence, st.prev(),
+                            current_task_id);
+                    if (sg == current_scheduling_group()) {
+                        handled = futurize_invoke([&] {
+                            return h->handler.func(shared_from_this(), timeout, msg_id, std::move(data.value()), std::move(h->holder));
+                        });
+                    } else {
+                        handled = with_scheduling_group(sg, [this, timeout, msg_id, &h = h->handler, data = std::move(data.value()), guard = std::move(h->holder)] () mutable {
+                            return h.func(shared_from_this(), timeout, msg_id, std::move(data), std::move(guard));
+                        });
+                    }
                 }
-                co_await with_scheduling_group(sg, [this, timeout, msg_id, &h = h->handler, data = std::move(data.value()), guard = std::move(h->holder)] () mutable {
-                    return h.func(shared_from_this(), timeout, msg_id, std::move(data), std::move(guard));
-                });
+                co_await std::move(handled);
             }
         }
     } catch (...) {

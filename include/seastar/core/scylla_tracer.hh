@@ -100,6 +100,32 @@ void trace_prepared_statement_snapshot_entry(std::string_view keyspace, std::str
         std::span<const std::byte> id) noexcept;
 void trace_prepared_statements_snapshot_end() noexcept;
 
+/// RPC connection/message records are deliberately local to the process. The
+/// connection id is not put on the wire; the trace viewer joins the two ends
+/// using the endpoint metadata from the connection snapshot, and pairs the two
+/// halves of one message by the per-direction sequence number.
+///
+/// Attribution to a task is what makes those pairs useful, and neither end of
+/// the wire is traced in the task that cares about the message: a message is
+/// written by the connection's send loop and read by its receive loop, both of
+/// which live for as long as the connection does.  So the two ends carry it
+/// explicitly instead.  `rpc_message_sent`/`rpc_reply_sent` carry the task that
+/// *enqueued* the buffer -- captured by `outgoing_entry`, which is constructed
+/// in the caller -- and `rpc_request_handled` opens a fresh task chain for an
+/// inbound request the way `cql_request` does for a CQL frame, so that the
+/// work a replica does for one request is separable from the connection's.
+uint64_t next_rpc_connection_id() noexcept;
+void trace_rpc_connection_open(uint64_t connection, std::string_view local,
+        std::string_view remote) noexcept;
+void trace_rpc_connection_close(uint64_t connection) noexcept;
+void trace_rpc_message_sent(uint64_t connection, uint64_t sequence, uint64_t task) noexcept;
+void trace_rpc_message_received(uint64_t connection, uint64_t sequence) noexcept;
+void trace_rpc_reply_sent(uint64_t connection, uint64_t sequence, int64_t msg_id, uint64_t task) noexcept;
+void trace_rpc_reply_received(uint64_t connection, uint64_t sequence, int64_t msg_id) noexcept;
+void trace_rpc_connections_snapshot() noexcept;
+void trace_rpc_request_handled(uint64_t connection, uint64_t sequence, uint64_t prev,
+        uint64_t task) noexcept;
+
 /// A fresh I/O id, unique within this shard.
 uint64_t next_io_id() noexcept;
 
