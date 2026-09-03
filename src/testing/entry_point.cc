@@ -21,6 +21,7 @@
  */
 
 #include <boost/test/unit_test.hpp>
+#include <pt/pt_trace.h>
 #include <seastar/testing/entry_point.hh>
 #include <seastar/testing/seastar_test.hh>
 #include <seastar/testing/test_runner.hh>
@@ -29,9 +30,18 @@ namespace seastar {
 
 namespace testing {
 
+static std::unique_ptr<pt::perf_trace> test_trace;
+
 static bool init_unit_test_suite() {
     auto&& ts = boost::unit_test::framework::master_test_suite();
-    return global_test_runner().start(ts.argc, ts.argv);
+    const bool started = global_test_runner().start(ts.argc, ts.argv);
+    if (started) {
+        // start() has initialized the reactor, but unit_test_main() has not
+        // started executing selected test cases yet.  This is the narrowest
+        // common boundary around the full Boost test run.
+        test_trace = pt::perf_trace::start_if_requested();
+    }
+    return started;
 }
 
 static void dummy_handler(int) {
@@ -62,6 +72,7 @@ int entry_point(int argc, char** argv) {
 #endif
 
     const int boost_exit_code = ::boost::unit_test::unit_test_main(&init_unit_test_suite, argc, argv);
+    test_trace.reset();
     const int seastar_exit_code = seastar::testing::global_test_runner().finalize();
     if (boost_exit_code) {
         return boost_exit_code;

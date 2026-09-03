@@ -1355,9 +1355,14 @@ if (Seastar_INSTALL OR Seastar_TESTING)
     src/testing/entry_point.cc
     src/testing/random.cc
     src/testing/seastar_test.cc
-    src/testing/test_runner.cc)
+    src/testing/test_runner.cc
+    ${CMAKE_CURRENT_LIST_DIR}/../../../modules/pt/pt_control.cc
+    ${CMAKE_CURRENT_LIST_DIR}/../../../modules/pt/pt_trace.cc)
 
   add_library (Seastar::seastar_testing ALIAS seastar_testing)
+
+  target_include_directories (seastar_testing PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../../../modules/pt/include)
 
   target_compile_definitions (seastar_testing
     PRIVATE ${Seastar_PRIVATE_COMPILE_DEFINITIONS})
