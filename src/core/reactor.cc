@@ -132,6 +132,7 @@
 #include <seastar/core/print.hh>
 #include <seastar/core/reactor.hh>
 #include <seastar/core/rendezvous.hh>
+#include <seastar/core/scylla_tracer.hh>
 #include <seastar/core/scylla_stacktrace_sampler.hh>
 #include <seastar/core/report_exception.hh>
 #include <seastar/core/resource.hh>
@@ -1123,6 +1124,13 @@ reactor::reactor(std::shared_ptr<seastar::smp> smp, alien::instance& alien, unsi
      * the chosen backend constructor may want to handle signals and thus
      * needs the _signals._signal_handlers map to be initialized.
      */
+    // Pick the process's boot id here, before any shard can trace or open a
+    // connection. It is process-wide, so the first reactor to be constructed
+    // decides it and the rest see that one; doing it here rather than lazily at
+    // the first use means the identity a trace carries is fixed at startup and
+    // not at whatever the first traced event happened to be.
+    (void)this_boot_id();
+
     _backend = rbs.create(*this);
     *internal::get_scheduling_group_specific_thread_local_data_ptr() = &_scheduling_group_specific_data;
     _task_queues[0] = std::make_unique<task_queue>(&_cpu_sched, 0, "main", "main", 1000);

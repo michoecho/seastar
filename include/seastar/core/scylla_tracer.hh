@@ -41,6 +41,43 @@
 
 namespace seastar {
 
+/// The identity of one run of one process: a version-1 (time-based) UUID picked
+/// once, shared by every shard, and carried by everything the run writes down.
+///
+/// A trace file says which *build* produced it -- that is the build ID -- but a
+/// build ID is the same on every node of a cluster running the same package, and
+/// the same again after a restart. What a reader of a distributed trace actually
+/// has to tell apart is *processes*: which snapshot files came out of one
+/// address space (so that their task ids, which are only unique within one, may
+/// be merged), and which node is at the far end of an RPC connection. Neither
+/// question has an answer in a build ID, an IP address (a node may be restarted
+/// under the same one) or a shard number.
+///
+/// Time-based rather than random so that it also orders the runs it names: two
+/// snapshot directories from one node sort by when the node booted.
+struct boot_id {
+    uint64_t msb = 0;  // time_low, time_mid, time_hi_and_version
+    uint64_t lsb = 0;  // clock_seq and node
+
+    friend bool operator==(const boot_id&, const boot_id&) noexcept = default;
+    explicit operator bool() const noexcept { return msb != 0 || lsb != 0; }
+};
+
+/// This process's boot id, picked on the first call.
+///
+/// The reactor's constructor makes that first call, which is what "picked at
+/// boot" means here: by the time any shard can trace or open a connection the
+/// answer is fixed, and every shard gets the same one because the state behind
+/// this is process-wide and not thread-local.
+boot_id this_boot_id() noexcept;
+
+/// A boot id in the canonical 8-4-4-4-12 hex form.
+std::string boot_id_to_string(boot_id id);
+
+/// The reverse, for a reader parsing one out of a snapshot's metadata. Returns a
+/// zero id for anything that is not a UUID.
+boot_id boot_id_from_string(std::string_view text);
+
 /// The next unused task id on this shard. A request handler takes one to open a
 /// new chain; everything else inherits.
 extern thread_local uint64_t fresh_task_id;
@@ -105,6 +142,19 @@ void trace_prepared_statements_snapshot_end() noexcept;
 /// using the endpoint metadata from the connection snapshot, and pairs the two
 /// halves of one message by the per-direction sequence number.
 ///
+/// What *is* on the wire is who the far end is: the RPC handshake carries a
+/// PEER_IDENTITY feature both ways, so each end learns the other's boot id and
+/// shard and puts them in its own connection records. That is not needed to
+/// pair two ends whose snapshots are both open -- the endpoints already do that
+/// -- but it is what lets a reader say which node a connection goes to when
+/// only one side of it was captured, and it catches the case the endpoint join
+/// cannot: an address reused by a node that has since restarted.
+///
+/// Because the identity is only known once the handshake is done,
+/// `rpc_connection_open` is emitted *after* negotiation rather than when the
+/// socket is set. A connection that never negotiates therefore has no records
+/// at all, which is the right answer: it never carried a message either.
+///
 /// Attribution to a task is what makes those pairs useful, and neither end of
 /// the wire is traced in the task that cares about the message: a message is
 /// written by the connection's send loop and read by its receive loop, both of
@@ -116,8 +166,9 @@ void trace_prepared_statements_snapshot_end() noexcept;
 /// work a replica does for one request is separable from the connection's.
 uint64_t next_rpc_connection_id() noexcept;
 void trace_rpc_connection_open(uint64_t connection, std::string_view local,
-        std::string_view remote) noexcept;
-void trace_rpc_connection_close(uint64_t connection) noexcept;
+        std::string_view remote, boot_id peer_boot, uint32_t peer_shard) noexcept;
+void trace_rpc_connection_close(uint64_t connection, boot_id peer_boot,
+        uint32_t peer_shard) noexcept;
 void trace_rpc_message_sent(uint64_t connection, uint64_t sequence, uint64_t task) noexcept;
 void trace_rpc_message_received(uint64_t connection, uint64_t sequence) noexcept;
 void trace_rpc_reply_sent(uint64_t connection, uint64_t sequence, int64_t msg_id, uint64_t task) noexcept;
@@ -129,11 +180,36 @@ void trace_rpc_request_handled(uint64_t connection, uint64_t sequence, uint64_t 
 /// A fresh I/O id, unique within this shard.
 uint64_t next_io_id() noexcept;
 
-/// This thread's rings, as a self-contained trace: the magic and a chunk per
-/// level. Synchronous -- it copies -- so that a caller sweeping every shard
-/// gets each one's rings as they were when it asked, and can write them out
-/// afterwards at its leisure.
-std::vector<std::byte> trace_snapshot();
+/// One record level of this thread's rings, as a self-contained trace, with
+/// what a reader needs to know about it before decoding a byte.
+///
+/// One part per level rather than one blob for all of them, because the levels
+/// are not the same kind of thing to whoever keeps the files: the debug ring is
+/// an order of magnitude the larger and holds the per-task switches, while the
+/// info ring holds the requests, the connection map and the stack samples. A
+/// snapshot split by level can have its expensive half deleted and stay
+/// readable. Each part carries the metadata chunk of its own accord, so it
+/// decodes without the other.
+///
+/// The times are wall clock nanoseconds and they bracket the *records*, not the
+/// snapshot: a ring evicts, so the oldest record in a busy shard's debug part
+/// may be a second old while the info part beside it reaches back minutes.
+struct trace_snapshot_part {
+    unsigned level = 0;         // the tracer's event_level, as a number
+    const char* level_name = "";  // ... and as "info" or "debug"
+    uint64_t first_record_ns = 0;  // when the oldest surviving buffer went live
+    uint64_t last_record_ns = 0;   // ... and when this snapshot stopped it
+    std::vector<std::byte> data;
+};
+
+/// This thread's rings, a part per record level. Synchronous -- it copies -- so
+/// that a caller sweeping every shard gets each one's rings as they were when
+/// it asked, and can write them out afterwards at its leisure.
+std::vector<trace_snapshot_part> trace_snapshot();
+
+/// The build ID of the executable, as lowercase hex: the name under which a
+/// reader of a snapshot asks for the objects its addresses point into.
+std::string trace_build_id();
 
 /// The C++ source of a decoder for the tracepoints this process holds. Written
 /// out beside a snapshot so the trace can be read without guessing which build

@@ -185,7 +185,18 @@ enum class protocol_features : uint32_t {
     STREAM_PARENT = 3,
     ISOLATION = 4,
     HANDLER_DURATION = 5,
+    // Who is at the other end: the peer's boot id and the shard the connection
+    // landed on. Sent by both sides and required by neither -- a peer that does
+    // not know the feature simply does not answer it, and the records on this
+    // side carry a zero identity. See scylla_tracer.hh.
+    PEER_IDENTITY = 6,
 };
+
+// PEER_IDENTITY's payload: the boot id's two halves and the shard, little
+// endian. Fixed width rather than text, because a feature value is bytes on the
+// wire and a UUID rendered as hex is more than twice the size for nothing.
+sstring serialize_peer_identity(boot_id id, uint32_t shard);
+std::pair<boot_id, uint32_t> deserialize_peer_identity(const sstring& encoded);
 
 // internal representation of feature data
 using feature_map = std::map<protocol_features, sstring>;
@@ -311,6 +322,12 @@ protected:
     uint64_t _trace_receive_sequence = 0;
     bool _trace_connection_open = false;
     bool _trace_connection_closed = false;
+    // Held from set_socket() until the handshake is done, because the open
+    // record is only written once the peer has said who it is.
+    std::string _trace_local;
+    std::string _trace_remote;
+    boot_id _peer_boot_id;
+    uint32_t _peer_shard = 0;
 
     std::unordered_map<connection_id, xshard_connection_ptr> _streams;
     queue<rcv_buf> _stream_queue = queue<rcv_buf>(max_queued_stream_buffers);
@@ -355,6 +372,14 @@ public:
 
     void set_socket(connected_socket&& fd);
     uint64_t trace_connection_id() const noexcept { return _trace_connection_id; }
+    // What the peer said in the handshake, and the record that says so. The
+    // setter is called by both sides' negotiate(); the tracepoint is emitted by
+    // trace_connection_negotiated() afterwards, once per connection.
+    void set_peer_identity(boot_id id, uint32_t shard) noexcept {
+        _peer_boot_id = id;
+        _peer_shard = shard;
+    }
+    void trace_connection_negotiated() noexcept;
     uint64_t next_trace_receive_sequence() noexcept { return ++_trace_receive_sequence; }
     uint64_t last_trace_receive_sequence() const noexcept { return _trace_receive_sequence; }
     bool error() const noexcept { return _error; }

@@ -205,6 +205,35 @@ future<> connection::send_entry(outgoing_entry& d) noexcept {
     });
 }
 
+sstring serialize_peer_identity(boot_id id, uint32_t shard) {
+    sstring encoded(sstring::initialized_later(), 20);
+    auto* p = encoded.data();
+    write_le<uint64_t>(p, id.msb);
+    write_le<uint64_t>(p + 8, id.lsb);
+    write_le<uint32_t>(p + 16, shard);
+    return encoded;
+}
+
+std::pair<boot_id, uint32_t> deserialize_peer_identity(const sstring& encoded) {
+    // A short value is a peer speaking a version of this feature we do not
+    // know, and the honest answer to "who is it" is then "no idea" -- not a
+    // half-read id that would pair a connection with the wrong node.
+    if (encoded.size() < 20) {
+        return {boot_id{}, 0};
+    }
+    const char* p = encoded.data();
+    return {boot_id{read_le<uint64_t>(p), read_le<uint64_t>(p + 8)}, read_le<uint32_t>(p + 16)};
+}
+
+void connection::trace_connection_negotiated() noexcept {
+    if (_trace_connection_open) {
+        return;
+    }
+    _trace_connection_open = true;
+    trace_rpc_connection_open(_trace_connection_id, _trace_local, _trace_remote,
+            _peer_boot_id, _peer_shard);
+}
+
 void connection::set_negotiated() noexcept {
     _negotiated->set_value();
     _negotiated = std::nullopt;
@@ -213,7 +242,7 @@ void connection::set_negotiated() noexcept {
 future<> connection::stop_send_loop(std::exception_ptr ex) {
     if (_trace_connection_open && !_trace_connection_closed) {
         _trace_connection_closed = true;
-        trace_rpc_connection_close(_trace_connection_id);
+        trace_rpc_connection_close(_trace_connection_id, _peer_boot_id, _peer_shard);
     }
     _error = true;
     if (_connected) {
@@ -255,11 +284,13 @@ void connection::set_socket(connected_socket&& fd) {
     if (_connected.has_value()) {
         throw std::runtime_error("already connected");
     }
-    auto local = format("{}", fd.local_address());
-    auto remote = format("{}", fd.remote_address());
+    _trace_local = format("{}", fd.local_address());
+    _trace_remote = format("{}", fd.remote_address());
     _connected.emplace(std::move(fd));
-    _trace_connection_open = true;
-    trace_rpc_connection_open(_trace_connection_id, std::string_view(local), std::string_view(remote));
+    // No open record yet: it carries the peer's identity, and the peer has not
+    // said who it is until the handshake. trace_connection_negotiated() writes
+    // it, and stop_send_loop() only writes a close for a connection that got
+    // that far.
 }
 
 future<> connection::send_negotiation_frame(feature_map features) {
@@ -720,6 +751,11 @@ client::negotiate(feature_map provided) {
             _id = deserialize_connection_id(e.second);
             break;
         }
+        case protocol_features::PEER_IDENTITY: {
+            const auto [id, shard] = deserialize_peer_identity(e.second);
+            set_peer_identity(id, shard);
+            break;
+        }
         default:
             // nothing to do
             ;
@@ -1012,11 +1048,16 @@ future<> client::loop(client_options ops, const socket_address& addr, const sock
         if (_options.stream_parent) {
             features[protocol_features::STREAM_PARENT] = serialize_connection_id(_options.stream_parent);
         }
+        // Unconditional: it costs 20 bytes once per connection, a peer that does
+        // not know it ignores it, and it is what a trace of two nodes joins on.
+        features[protocol_features::PEER_IDENTITY] =
+                serialize_peer_identity(this_boot_id(), this_shard_id());
         if (!_options.isolation_cookie.empty()) {
             features[protocol_features::ISOLATION] = _options.isolation_cookie;
         }
 
         co_await negotiate_protocol(std::move(features));
+        trace_connection_negotiated();
 
         _propagate_timeout = !is_stream();
         set_negotiated();
@@ -1125,6 +1166,13 @@ server::connection::negotiate(feature_map requested) {
             _timeout_negotiated = true;
             ret[protocol_features::TIMEOUT] = "";
             break;
+        case protocol_features::PEER_IDENTITY: {
+            const auto [id, shard] = deserialize_peer_identity(e.second);
+            set_peer_identity(id, shard);
+            ret[protocol_features::PEER_IDENTITY] =
+                    serialize_peer_identity(this_boot_id(), this_shard_id());
+            break;
+        }
         case protocol_features::HANDLER_DURATION:
             _handler_duration_negotiated = true;
             ret[protocol_features::HANDLER_DURATION] = "";
@@ -1255,6 +1303,7 @@ future<> server::connection::process() {
     std::exception_ptr ep;
     try {
         co_await negotiate_protocol();
+        trace_connection_negotiated();
         auto sg = _isolation_config ? _isolation_config->sched_group : current_scheduling_group();
         co_await coroutine::switch_to(sg);
         set_negotiated();
