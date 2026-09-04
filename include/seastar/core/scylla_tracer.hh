@@ -10,21 +10,33 @@
  *
  * What is deliberately *not* here is any TRACEPOINT() call site. Every one of
  * them lives in src/core/scylla_tracer.cc, behind the out-of-line hooks
- * declared below, and there are two reasons for that:
- *
- *   - A tracepoint's static key is a block-scope static whose address the
- *     branch site needs as a link-time constant. In an inline or template
- *     function -- which is what a hook in a header would be -- that static has
- *     vague linkage and, in a shared library, is preemptible; the branch then
- *     fails to compile ("impossible constraint in 'asm'"). Out of line in one
- *     translation unit it is a plain local static.
+ * declared below. That is a convention, not a constraint, and two things keep
+ * it:
  *
  *   - It keeps the whole tracepoint table inside libseastar.so, so the process
  *     has exactly one table, one static-key jump table and one registry --
  *     without the executable needing -Wl,--export-dynamic to share them.
  *
- * The cost is a function call per event rather than an inlined store. For a
- * prototype that is the right trade.
+ *   - This header is included by task.hh and so by nearly every translation
+ *     unit in Scylla. A change to it is a ~15 minute rebuild; a change confined
+ *     to the .cc is a few steps and a relink. Hooks out of line mean that
+ *     adding a tracepoint usually does not touch this file at all.
+ *
+ * It used to be a constraint. A jump entry named its key directly, and in PIC
+ * that address is only a link-time constant for a symbol that cannot be
+ * preempted -- so a tracepoint in an inline or template function in a shared
+ * library did not merely misbehave, it failed to compile ("impossible
+ * constraint in 'asm'"). That is no longer how it works. A jump entry now names
+ * static_keys::key_ref, a hidden per-object slot pointing at the key, whose
+ * initialiser the loader resolves with an ordinary data relocation; and
+ * JUMP_TABLE_ENTRY pushes its section with the "?" flag, so the entry joins the
+ * COMDAT group of the inline function it belongs to and is discarded with it.
+ * A gated tracepoint in a header works, is exercised by
+ * modules/tracer/plugin/common_tracepoints.h, and the code generator already
+ * tolerates the duplicate entries it produces.
+ *
+ * The cost of the out-of-line hook is a function call per event rather than an
+ * inlined store. For a prototype that is the right trade.
  */
 
 #pragma once
