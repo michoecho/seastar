@@ -2787,6 +2787,10 @@ bool reactor::task_queue::run_tasks() {
 
     // Make sure new tasks will inherit our scheduling group
     *internal::current_scheduling_group_ptr() = scheduling_group(_id);
+    // Brackets this queue's stretch of the cpu. Every trace_run_task() below
+    // happens between the two, which is how a trace reader attributes a task to
+    // a scheduling group without every run_task record having to carry one.
+    trace_task_queue_run_begin(_id);
     while (!_q.empty()) {
         auto tsk = _q.front();
         _q.pop_front();
@@ -2824,6 +2828,7 @@ bool reactor::task_queue::run_tasks() {
             }
         }
     }
+    trace_task_queue_run_end();
 
     return !_q.empty();
 }

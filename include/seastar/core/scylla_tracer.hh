@@ -119,6 +119,14 @@ struct [[nodiscard]] switch_task {
 // is somebody else's job, and this process does not copy them anywhere. See
 // "Source locations" in modules/trace-viewer/README.md.
 void trace_run_task(uint64_t prev, uint64_t task, srcloc::location at) noexcept;
+// The reactor gave the cpu to one task queue, and took it back. A task queue is
+// a scheduling group on this shard, so `scheduling_group` is that group's id --
+// and every run_task between the two brackets ran under it. Only the begin
+// carries it: the end is the same queue by construction, and a reader that has
+// lost the begin (the ring evicted it) cannot use a group id it has nothing to
+// attribute to anyway.
+void trace_task_queue_run_begin(uint32_t scheduling_group) noexcept;
+void trace_task_queue_run_end() noexcept;
 void trace_execution_stage(uint64_t prev, uint64_t task) noexcept;
 void trace_cql_request(uint64_t prev, uint64_t task) noexcept;
 void trace_semaphore_execute(uint64_t prev, uint64_t task) noexcept;

@@ -9,6 +9,9 @@
  *
  *   run_task{prev, task, at}     the reactor picked a task off a run queue, and
                                 where that task was created (task::location())
+ *   task_queue_run_{begin,end}   the reactor gave the cpu to one task queue and
+ *                                took it back; the begin carries the scheduling
+ *                                group id every task_run between the two ran under
  *   execution_stage{prev, task}  an execution stage ran a queued work item
  *   semaphore_execute{prev, task} the reader concurrency semaphore's loop ran
  *                                a queued read, as the task that asked for it
@@ -204,6 +207,17 @@ void ensure_thread_tracer() noexcept {
 void trace_run_task(uint64_t prev, uint64_t task, srcloc::location at) noexcept {
     ensure_tracer();
     TRACEPOINT(tracer::event_level::debug, "run_task", "prev", prev, "task", task, "at", at);
+}
+
+void trace_task_queue_run_begin(uint32_t scheduling_group) noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::debug, "task_queue_run_begin",
+            "scheduling_group", scheduling_group);
+}
+
+void trace_task_queue_run_end() noexcept {
+    ensure_tracer();
+    TRACEPOINT(tracer::event_level::debug, "task_queue_run_end");
 }
 
 void trace_execution_stage(uint64_t prev, uint64_t task) noexcept {
