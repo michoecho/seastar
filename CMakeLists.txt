@@ -912,7 +912,6 @@ target_include_directories (seastar
 target_sources (seastar
   PRIVATE
     ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
-    ${Scylla_TRACER_SOURCE_DIR}/codegen.cc
     ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
     ${Scylla_SRCLOC_SOURCE_DIR}/source_location.cc
     src/core/scylla_tracer.cc
@@ -920,7 +919,6 @@ target_sources (seastar
     src/core/rendezvous.cc)
 set_source_files_properties (
   ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
-  ${Scylla_TRACER_SOURCE_DIR}/codegen.cc
   ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
   ${Scylla_SRCLOC_SOURCE_DIR}/source_location.cc
   src/core/scylla_tracer.cc

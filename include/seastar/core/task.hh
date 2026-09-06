@@ -38,7 +38,7 @@ class task {
     // coroutine suspended at. One word -- the address of the compiler's own
     // source_location constant -- which is exactly what a tracepoint can carry
     // and what modules/source_location exists to read back. See srcloc::location
-    // there, and "resolving a location" in tracer/codegen.h.
+    // there, and "resolving a location" in modules/trace-viewer/DECODING.md.
     //
     // Stored as a srcloc::location rather than as the std::source_location it
     // arrives as because that is the form the trace wants; the two are the same

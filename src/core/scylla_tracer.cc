@@ -48,7 +48,6 @@
 #include <seastar/core/scylla_stacktrace_sampler.hh>
 #include <seastar/core/shard_id.hh>
 
-#include "tracer/codegen.h"
 #include "tracer/tracer.h"
 
 #include <atomic>
@@ -412,10 +411,6 @@ std::vector<trace_snapshot_part> trace_snapshot() {
 
 std::string trace_build_id() {
     return tracer::executable_build_id();
-}
-
-std::string trace_decoder_source() {
-    return tracer::generate_decoder_source();
 }
 
 }

@@ -231,9 +231,4 @@ std::vector<trace_snapshot_part> trace_snapshot();
 /// reader of a snapshot asks for the objects its addresses point into.
 std::string trace_build_id();
 
-/// The C++ source of a decoder for the tracepoints this process holds. Written
-/// out beside a snapshot so the trace can be read without guessing which build
-/// produced it.
-std::string trace_decoder_source();
-
 }
