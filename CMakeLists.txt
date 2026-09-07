@@ -891,6 +891,7 @@ target_include_directories (seastar
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${Seastar_GEN_BINARY_DIR}/include>
     $<BUILD_INTERFACE:${Seastar_GEN_BINARY_DIR}/src>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
     ${Scylla_TRACER_INCLUDE_DIRS}
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -900,7 +901,7 @@ target_include_directories (seastar
 # two build systems have nothing to say to each other.
 #
 # They live in libseastar.so and nowhere else, so the process has one tracepoint
-# table -- see include/seastar/core/scylla_tracer.hh. -w because they are not
+# table -- see tracing/tracer.hh. -w because they are not
 # written to Seastar's -Wall -Werror, and making them so is not the point of the
 # experiment.
 #
@@ -914,14 +915,14 @@ target_sources (seastar
     ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
     ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
     ${Scylla_SRCLOC_SOURCE_DIR}/source_location.cc
-    src/core/scylla_tracer.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tracing/tracer.cc
     src/core/scylla_stacktrace_sampler.cc
     src/core/rendezvous.cc)
 set_source_files_properties (
   ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
   ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
   ${Scylla_SRCLOC_SOURCE_DIR}/source_location.cc
-  src/core/scylla_tracer.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/../tracing/tracer.cc
   src/core/scylla_stacktrace_sampler.cc
   src/core/rendezvous.cc
   PROPERTIES COMPILE_OPTIONS "-w")

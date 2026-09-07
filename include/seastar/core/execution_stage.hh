@@ -27,7 +27,7 @@
 #include <seastar/core/sstring.hh>
 #include <seastar/core/metrics.hh>
 #include <seastar/core/scheduling.hh>
-#include <seastar/core/scylla_tracer.hh>
+#include <tracing/tracer.hh>
 #include <seastar/util/reference_wrapper.hh>
 #include <seastar/util/noncopyable_function.hh>
 #include <seastar/util/tuple_utils.hh>
@@ -248,8 +248,8 @@ private:
             const uint64_t wi_task_id = wi._task_id;
             _queue.pop_front();
             {
-                switch_task st(wi_task_id);
-                trace_execution_stage(st.prev(), wi_task_id);
+                [[maybe_unused]] switch_task st(wi_task_id);
+                trace_execution_stage(wi_task_id);
                 futurize<ReturnType>::apply(_function, unwrap(std::move(wi_in))).forward_to(std::move(wi_ready));
             }
             _stats.function_calls_executed++;

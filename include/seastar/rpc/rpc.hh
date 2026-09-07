@@ -42,7 +42,7 @@
 #include <seastar/core/scheduling.hh>
 #include <seastar/core/deleter.hh>
 #include <seastar/core/semaphore.hh>
-#include <seastar/core/scylla_tracer.hh>
+#include <tracing/tracer.hh>
 #include <seastar/util/backtrace.hh>
 #include <seastar/util/log.hh>
 
@@ -188,7 +188,7 @@ enum class protocol_features : uint32_t {
     // Who is at the other end: the peer's boot id and the shard the connection
     // landed on. Sent by both sides and required by neither -- a peer that does
     // not know the feature simply does not answer it, and the records on this
-    // side carry a zero identity. See scylla_tracer.hh.
+    // side carry a zero identity. See tracing/tracer.hh.
     PEER_IDENTITY = 6,
 };
 

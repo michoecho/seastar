@@ -39,6 +39,27 @@
 #include <fmt/format.h>
 #include <fmt/std.h>
 
+// The static-key header declares the section sentinels as weak symbols. Give
+// those declarations hidden visibility before including it: this header is
+// public and gets included by small executables such as iotune, where a
+// default-visible weak array declaration would otherwise become a copy
+// relocation against libseastar.so.
+namespace static_keys {
+struct static_key_desc;
+struct jump_entry;
+}
+extern "C" {
+extern static_keys::static_key_desc __start___static_keys[]
+    __attribute__((weak, visibility("hidden")));
+extern static_keys::static_key_desc __stop___static_keys[]
+    __attribute__((weak, visibility("hidden")));
+extern static_keys::jump_entry __start___jump_table[]
+    __attribute__((weak, visibility("hidden")));
+extern static_keys::jump_entry __stop___jump_table[]
+    __attribute__((weak, visibility("hidden")));
+}
+#include "static_keys/static_keys.h"
+
 /// \addtogroup logging
 /// @{
 
@@ -46,6 +67,9 @@
 namespace seastar {
 class logger;
 class logger_registry;
+
+extern __attribute__((visibility("default")))
+    static_keys::static_key_false seastar_logger_enabled;
 
 namespace internal {
 
@@ -280,6 +304,9 @@ public:
     ///
     template <typename... Args>
     void log(log_level level, format_info_t<Args...> fmt, Args&&... args) noexcept {
+        if (!static_branch_unlikely(&seastar_logger_enabled)) {
+            return;
+        }
         if (is_enabled(level)) {
             try {
                 lambda_log_writer writer([&] (internal::log_buf::inserter_iterator it) {
@@ -312,6 +339,9 @@ public:
     ///
     template <typename... Args>
     void log(log_level level, rate_limit& rl, format_info_t<Args...> fmt, Args&&... args) noexcept {
+        if (!static_branch_unlikely(&seastar_logger_enabled)) {
+            return;
+        }
         if (is_enabled(level) && !rl.rate_limited()) {
             try {
                 lambda_log_writer writer([&] (internal::log_buf::inserter_iterator it) {
@@ -338,6 +368,9 @@ public:
     /// buffer directly, avoiding the use of any intermediary buffers.
     /// This is rate-limited version, see \ref rate_limit.
     void log(log_level level, rate_limit& rl, log_writer& writer, format_info_t<> fmt = {}) noexcept {
+        if (!static_branch_unlikely(&seastar_logger_enabled)) {
+            return;
+        }
         if (is_enabled(level) && !rl.rate_limited()) {
             try {
                 lambda_log_writer writer_wrapper([&] (internal::log_buf::inserter_iterator it) {

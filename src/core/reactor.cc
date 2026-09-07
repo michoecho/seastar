@@ -132,7 +132,8 @@
 #include <seastar/core/print.hh>
 #include <seastar/core/reactor.hh>
 #include <seastar/core/rendezvous.hh>
-#include <seastar/core/scylla_tracer.hh>
+#include <tracing/tracer.hh>
+#include <tracing/tracer_control.hh>
 #include <seastar/core/scylla_stacktrace_sampler.hh>
 #include <seastar/core/report_exception.hh>
 #include <seastar/core/resource.hh>
@@ -186,6 +187,8 @@
 #include <seastar/util/assert.hh>
 #include <seastar/core/internal/systemwide_memory_barrier.hh>
 
+#include "tracer/tracer.h"
+
 namespace std {
     template <> struct hash<std::pair<std::string_view, int>> {
         size_t operator () (std::pair<std::string_view, int> v) const {
@@ -194,6 +197,14 @@ namespace std {
     };
 }
 namespace seastar {
+
+namespace {
+
+// run_task is the hottest tracepoint in this file. Its records name the
+// tracepoint with one byte rather than the eight-byte address of its entry.
+inline constexpr tracer::tracepoint_id run_task_tracepoint_id{1};
+
+}
 
 static_assert(posix::shutdown_mask(SHUT_RD) == posix::rcv_shutdown);
 static_assert(posix::shutdown_mask(SHUT_WR) == posix::snd_shutdown);
@@ -2787,7 +2798,7 @@ bool reactor::task_queue::run_tasks() {
 
     // Make sure new tasks will inherit our scheduling group
     *internal::current_scheduling_group_ptr() = scheduling_group(_id);
-    // Brackets this queue's stretch of the cpu. Every trace_run_task() below
+    // Brackets this queue's stretch of the cpu. Every run_task tracepoint below
     // happens between the two, which is how a trace reader attributes a task to
     // a scheduling group without every run_task record having to carry one.
     trace_task_queue_run_begin(_id);
@@ -2801,8 +2812,10 @@ bool reactor::task_queue::run_tasks() {
             // Read before running: run_and_dispose() deletes the task.
             const uint64_t id = tsk->_id;
             const srcloc::location at = tsk->location();
-            switch_task st(id);
-            trace_run_task(st.prev(), id, at);
+            [[maybe_unused]] switch_task st(id);
+            ensure_thread_tracer();
+            TRACEPOINT_STATIC_ID(run_task_tracepoint_id, tracer::event_level::debug,
+                    "run_task", "task", id, "at", at);
             tsk->run_and_dispose();
         }
         r._current_task = nullptr;

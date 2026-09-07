@@ -57,6 +57,10 @@
 
 using namespace std::chrono_literals;
 
+namespace seastar {
+DEFINE_STATIC_KEY_FALSE_EXPORTED(seastar_logger_enabled);
+}
+
 struct wrapped_log_level {
     seastar::log_level level;
 };

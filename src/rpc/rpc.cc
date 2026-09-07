@@ -1345,8 +1345,8 @@ future<> server::connection::process() {
                 // for every request after this one.
                 future<> handled = make_ready_future<>();
                 {
-                    auto st = switch_task(fresh_task_id++);
-                    trace_rpc_request_handled(trace_connection_id(), trace_sequence, st.prev(),
+                    [[maybe_unused]] auto st = switch_task(fresh_task_id++);
+                    trace_rpc_request_handled(trace_connection_id(), trace_sequence,
                             current_task_id);
                     if (sg == current_scheduling_group()) {
                         handled = futurize_invoke([&] {

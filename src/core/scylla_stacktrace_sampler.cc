@@ -3,16 +3,16 @@
  *
  * One perf event and one mmap ring per reactor thread, opened lazily the first
  * time sampling is switched on and kept for the life of the process. The
- * tracepoint call site is here rather than in scylla_tracer.cc only because
+ * tracepoint call site is here rather than in tracing/tracer.cc only because
  * this is the one place that has anything to say to it; it is still an
  * out-of-line function in libseastar.so, which is what a static key needs --
- * see the header comment on core/scylla_tracer.hh.
+ * see the header comment on tracing/tracer.hh.
  */
 
 #include <seastar/core/scylla_stacktrace_sampler.hh>
 
-#include <seastar/core/scylla_tracer.hh>
-#include <seastar/core/scylla_tracer_control.hh>
+#include <tracing/tracer.hh>
+#include <tracing/tracer_control.hh>
 #include <seastar/core/shard_id.hh>
 #include <seastar/util/log.hh>
 
@@ -253,7 +253,7 @@ private:
     std::array<std::uint64_t, max_frames> _frames{};
 };
 
-// Leaked for the same reason the rings in scylla_tracer.cc are: a reactor is
+// Leaked for the same reason the rings in tracing/tracer.cc are: a reactor is
 // still running tasks while thread_locals are being torn down.
 thread_local sampler* local_sampler = nullptr;
 
