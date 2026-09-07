@@ -187,7 +187,7 @@ future<> connection::send_entry(outgoing_entry& d) noexcept {
         auto reply_msg_id = d.reply_msg_id;
         // Whoever queued this entry, rather than the send loop we are running
         // in.  See outgoing_entry::trace_task.
-        const uint64_t trace_task = d.trace_task;
+        const uint32_t trace_task = d.trace_task;
         auto sequence = is_message ? ++_trace_send_sequence : 0;
         auto buf = compress(std::move(d.buf));
         return send_buffer(std::move(buf)).then([this, is_message, sequence, reply_msg_id, trace_task] {
@@ -1345,7 +1345,7 @@ future<> server::connection::process() {
                 // for every request after this one.
                 future<> handled = make_ready_future<>();
                 {
-                    [[maybe_unused]] auto st = switch_task(fresh_task_id++);
+                    [[maybe_unused]] auto st = switch_task(next_task_id());
                     trace_rpc_request_handled(trace_connection_id(), trace_sequence,
                             current_task_id);
                     if (sg == current_scheduling_group()) {

@@ -245,7 +245,7 @@ private:
             auto& wi = _queue.front();
             auto wi_in = std::move(wi._in);
             auto wi_ready = std::move(wi._ready);
-            const uint64_t wi_task_id = wi._task_id;
+            const uint32_t wi_task_id = wi._task_id;
             _queue.pop_front();
             {
                 [[maybe_unused]] switch_task st(wi_task_id);
