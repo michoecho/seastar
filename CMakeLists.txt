@@ -53,10 +53,10 @@ project (Seastar
 add_link_options (-Wl,--build-id=sha1)
 
 # The stack sampler asks the kernel to walk the user stack by frame pointer --
-# see include/seastar/core/scylla_stacktrace_sampler.hh -- and a function that
+# see include/seastar/core/stacktrace_sampler.hh -- and a function that
 # reused rbp for something else is a walk that stops there or, worse, wanders.
-# So the whole library keeps its frame pointers; Scylla's own top-level
-# CMakeLists.txt does the same for the executable. It costs a register and a
+# So the whole library keeps its frame pointers, and an executable that wants
+# its own frames sampled has to do the same. It costs a register and a
 # couple of instructions per call, and it is the entire price of the sampler
 # being frame-pointer based rather than copying stacks out.
 #
@@ -64,16 +64,17 @@ add_link_options (-Wl,--build-id=sha1)
 add_compile_options (-fno-omit-frame-pointer)
 
 # Where the cpp_template playground's tracer lives. Absolute, and hardcoded --
-# see the target_sources() call further down.
-set (Scylla_TRACER_REPO "/home/michal/projects/cpp_template")
-set (Scylla_TRACER_SOURCE_DIR "${Scylla_TRACER_REPO}/modules/tracer")
-set (Scylla_UTILS_SOURCE_DIR "${Scylla_TRACER_REPO}/modules/utils")
-set (Scylla_SRCLOC_SOURCE_DIR "${Scylla_TRACER_REPO}/modules/source_location")
-set (Scylla_TRACER_INCLUDE_DIRS
-  "${Scylla_TRACER_REPO}/modules/tracer/include"
-  "${Scylla_TRACER_REPO}/modules/static_keys/include"
-  "${Scylla_TRACER_REPO}/modules/utils/include"
-  "${Scylla_TRACER_REPO}/modules/source_location/include")
+# see the target_sources() call further down. Public, because an application
+# with tracepoints of its own compiles them against these headers.
+set (Seastar_TRACER_REPO "/home/michal/projects/cpp_template")
+set (Seastar_TRACER_SOURCE_DIR "${Seastar_TRACER_REPO}/modules/tracer")
+set (Seastar_UTILS_SOURCE_DIR "${Seastar_TRACER_REPO}/modules/utils")
+set (Seastar_SRCLOC_SOURCE_DIR "${Seastar_TRACER_REPO}/modules/source_location")
+set (Seastar_TRACER_INCLUDE_DIRS
+  "${Seastar_TRACER_REPO}/modules/tracer/include"
+  "${Seastar_TRACER_REPO}/modules/static_keys/include"
+  "${Seastar_TRACER_REPO}/modules/utils/include"
+  "${Seastar_TRACER_REPO}/modules/source_location/include")
 
 set (Seastar_ALLOC_FAILURE_INJECTION
   "DEFAULT"
@@ -891,8 +892,7 @@ target_include_directories (seastar
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${Seastar_GEN_BINARY_DIR}/include>
     $<BUILD_INTERFACE:${Seastar_GEN_BINARY_DIR}/src>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
-    ${Scylla_TRACER_INCLUDE_DIRS}
+    ${Seastar_TRACER_INCLUDE_DIRS}
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -900,10 +900,12 @@ target_include_directories (seastar
 # absolute path rather than vendored or packaged: this is a prototype, and the
 # two build systems have nothing to say to each other.
 #
-# They live in libseastar.so and nowhere else, so the process has one tracepoint
-# table -- see tracing/tracer.hh. -w because they are not
-# written to Seastar's -Wall -Werror, and making them so is not the point of the
-# experiment.
+# The tracer itself lives in libseastar.so and nowhere else, so that everything
+# built against it shares one registry, one static-key jump table and one set of
+# rings; the tracepoints *using* it are per object, and an application keeps its
+# own -- see the header comment on include/seastar/core/tracer.hh. -w because
+# they are not written to Seastar's -Wall -Werror, and making them so is not the
+# point of the experiment.
 #
 # The barrier comes along for the ride: it is what the rendezvous point in
 # src/core/rendezvous.cc gathers the shards with, and it is a plain
@@ -912,18 +914,18 @@ target_include_directories (seastar
 # listed here -- this build has no doctest to link them against.
 target_sources (seastar
   PRIVATE
-    ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
-    ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
-    ${Scylla_SRCLOC_SOURCE_DIR}/source_location.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tracing/tracer.cc
-    src/core/scylla_stacktrace_sampler.cc
+    ${Seastar_TRACER_SOURCE_DIR}/tracer.cc
+    ${Seastar_UTILS_SOURCE_DIR}/barrier.cc
+    ${Seastar_SRCLOC_SOURCE_DIR}/source_location.cc
+    src/core/tracer.cc
+    src/core/stacktrace_sampler.cc
     src/core/rendezvous.cc)
 set_source_files_properties (
-  ${Scylla_TRACER_SOURCE_DIR}/tracer.cc
-  ${Scylla_UTILS_SOURCE_DIR}/barrier.cc
-  ${Scylla_SRCLOC_SOURCE_DIR}/source_location.cc
-  ${CMAKE_CURRENT_SOURCE_DIR}/../tracing/tracer.cc
-  src/core/scylla_stacktrace_sampler.cc
+  ${Seastar_TRACER_SOURCE_DIR}/tracer.cc
+  ${Seastar_UTILS_SOURCE_DIR}/barrier.cc
+  ${Seastar_SRCLOC_SOURCE_DIR}/source_location.cc
+  src/core/tracer.cc
+  src/core/stacktrace_sampler.cc
   src/core/rendezvous.cc
   PROPERTIES COMPILE_OPTIONS "-w")
 

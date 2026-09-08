@@ -43,6 +43,7 @@
 #include <seastar/core/internal/io_sink.hh>
 #include <seastar/core/io_priority_class.hh>
 #include <seastar/core/internal/io_trace.hh>
+#include <seastar/core/tracer.hh>
 #include <seastar/util/log.hh>
 
 namespace seastar {
@@ -327,7 +328,7 @@ public:
     }
 
     virtual void complete(size_t res) noexcept override {
-        trace_io_end(_task_id, _io_id);
+        trace_io_completed(_task_id, _io_id);
         SEASTAR_IO_TRACE(io_queue_completed, this);
         auto now = io_queue::clock_type::now();
         auto delay = std::chrono::duration_cast<std::chrono::duration<double>>(now - _ts);
@@ -338,6 +339,7 @@ public:
     }
 
     void cancel() noexcept {
+        trace_io_cancelled(_io_id);
         SEASTAR_IO_TRACE(io_queue_cancelled, this);
         _pclass.on_cancel();
         _pr.set_exception(std::make_exception_ptr(default_io_exception_factory::cancelled()));
@@ -345,6 +347,7 @@ public:
     }
 
     void dispatch() noexcept {
+        trace_io_dispatched(_io_id);
         SEASTAR_IO_TRACE(io_queue_dispatched, this);
         auto now = io_queue::clock_type::now();
         _pclass.on_dispatch(_dnl, std::chrono::duration_cast<std::chrono::duration<double>>(now - _ts));
@@ -353,9 +356,14 @@ public:
     }
 
     future<size_t> get_future() {
-        trace_io_begin(_task_id, _io_id);
         return _pr.get_future();
     }
+
+    // For the queued record, which is emitted by the request that owns this
+    // descriptor: the task is the one that asked for the I/O, captured when the
+    // descriptor was constructed, and the id is what pairs the four records up.
+    uint32_t task() const noexcept { return _task_id; }
+    uint64_t io_id() const noexcept { return _io_id; }
 
     fair_queue_entry::capacity_t capacity() const noexcept { return _fq_capacity; }
     stream_id stream() const noexcept { return _stream; }
@@ -379,6 +387,8 @@ public:
         , _fq_entry(cap)
         , _desc(std::make_unique<io_desc_read_write>(_ioq, pc, _stream, dnl, cap, std::move(iovs)))
     {
+        trace_io_queued(_desc->task(), _desc->io_id(), fd(), uint32_t(dnl.rw_idx()),
+                uint32_t(pc.fq_class()), offset(), dnl.length());
         SEASTAR_IO_TRACE(io_queue_queued, fd(), _desc.get(), dnl.rw_idx(), pc.fq_class(), offset(), dnl.length());
     }
 

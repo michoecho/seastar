@@ -27,7 +27,7 @@
 #include <seastar/core/sstring.hh>
 #include <seastar/core/metrics.hh>
 #include <seastar/core/scheduling.hh>
-#include <tracing/tracer.hh>
+#include <seastar/core/tracer.hh>
 #include <seastar/util/reference_wrapper.hh>
 #include <seastar/util/noncopyable_function.hh>
 #include <seastar/util/tuple_utils.hh>

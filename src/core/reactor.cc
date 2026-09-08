@@ -132,9 +132,9 @@
 #include <seastar/core/print.hh>
 #include <seastar/core/reactor.hh>
 #include <seastar/core/rendezvous.hh>
-#include <tracing/tracer.hh>
-#include <tracing/tracer_control.hh>
-#include <seastar/core/scylla_stacktrace_sampler.hh>
+#include <seastar/core/tracer.hh>
+#include <seastar/core/tracer_control.hh>
+#include <seastar/core/stacktrace_sampler.hh>
 #include <seastar/core/report_exception.hh>
 #include <seastar/core/resource.hh>
 #include <seastar/core/scheduling.hh>
@@ -3448,7 +3448,7 @@ int reactor::do_run() {
     // which task was on the cpu when it was taken, so the record it becomes
     // wants to be written between tasks rather than inside one. It does
     // nothing at all until tracing is switched on -- see
-    // include/seastar/core/scylla_stacktrace_sampler.hh.
+    // include/seastar/core/stacktrace_sampler.hh.
     poller stacktrace_sampler_poller(internal::make_stacktrace_sampler_pollfn());
 
     // Last, deliberately. It is the point at which this shard is known to be
